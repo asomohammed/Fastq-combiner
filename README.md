@@ -279,9 +279,10 @@ done
 python3 fastq_combiner.py mapping.csv -d /data/ 2>&1 | tee debug.log
 ```
 
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+## 📞 Getting Help
+💬 GitHub Discussions: For questions and ideas
+🐛 GitHub Issues: For bugs and feature requests
+📧 Email: [aso.mohammed@uniklinik-freiburg.de] for urgent matters
 
 ### Development Setup
 ```bash
