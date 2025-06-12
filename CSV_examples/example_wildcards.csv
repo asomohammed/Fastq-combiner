@@ -1,0 +1,3 @@
+target_sample,source_file1,source_file2,source_file3
+Patient1_All,*/Patient1_*,data/*/Patient1,**/Patient1_R1_*.fastq.gz
+Patient2_All,run*/Patient2,Patient2_*,**/Patient2*

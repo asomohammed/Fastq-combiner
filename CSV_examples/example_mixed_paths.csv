@@ -1,0 +1,4 @@
+target_sample,source_file1,source_file2,source_file3
+Patient1_Combined,/full/path/to/run1/Patient1_R1_001.fastq.gz,run2/Patient1,Patient1_run3
+Patient2_Combined,data/run1/Patient2,/absolute/path/run2/Patient2_R1_001.fastq.gz,run3/Patient2
+Control_Combined,../previous_run/Control,current_run/Control,backup/Control_R1_001.fastq.gz
