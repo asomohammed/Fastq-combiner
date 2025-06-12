@@ -319,8 +319,6 @@ This README includes:
 3. **📖 Comprehensive documentation** - All features explained
 4. **💡 Real examples** - Practical use cases
 5. **🔧 Troubleshooting** - Common issues and solutions
-6. **🤝 Contributing guidelines** - How others can help
-7. **📊 Performance metrics** - Speed and efficiency details
-8. **🧬 Cell Ranger integration** - Specific workflow guidance
-9. **📋 Professional formatting** - Clean, scannable layout
-10. **⭐ Call to action** - Encourages GitHub engagement
+6. **📊 Performance metrics** - Speed and efficiency details
+7. **🧬 Cell Ranger integration** - Specific workflow guidance
+8. **📋 Professional formatting** - Clean, scannable layout
