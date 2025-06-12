@@ -1,6 +1,3 @@
-# Fastq-combiner
-FASTQ file combiner 
-
 # FASTQ Combiner 🚀
 
 A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible outputs with fuzzy matching for sample names. Perfect for combining multi-lane sequencing data or merging samples across different sequencing runs.
