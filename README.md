@@ -311,14 +311,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 *Star ⭐ this repo if it helped you!*
 
-
-This README includes:
-
-1. **🎯 Clear value proposition** - What it does and why it's useful
-2. **🚀 Quick start guide** - Get users running immediately  
-3. **📖 Comprehensive documentation** - All features explained
-4. **💡 Real examples** - Practical use cases
-5. **🔧 Troubleshooting** - Common issues and solutions
-6. **📊 Performance metrics** - Speed and efficiency details
-7. **🧬 Cell Ranger integration** - Specific workflow guidance
-8. **📋 Professional formatting** - Clean, scannable layout
