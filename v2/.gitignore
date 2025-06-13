@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# FASTQ files (do not commit raw FASTQs or combined FASTQs)
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# Log files
+*.log
+*.err
+*.out
+
+# HTML reports (optional — comment out if you want to commit reports)
+combined_output/*.html
+
+# Temp files
+*.tmp
+*.swp
+*.DS_Store
+
+# Test output
+htmlcov/
+coverage.xml
+.cache
+pytest_cache/
+
+# VSCode settings
+.vscode/
