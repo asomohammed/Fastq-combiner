@@ -1,4 +1,49 @@
 #!/usr/bin/env python3
+"""
+fastq_combiner_v2.py
+
+FASTQ File Combiner - Version 2
+
+Description:
+    Combines multiple FASTQ files into a single output FASTQ file.
+    Designed for high-throughput sequencing workflows where merging reads from different sources is required.
+    Handles standard FASTQ format (4 lines per record), supports large files, and preserves record integrity.
+
+Usage:
+    python fastq_combiner_v2.py -i <input1.fastq> <input2.fastq> ... -o <output.fastq>
+    Additional command-line options may be available (see code or help).
+
+Inputs:
+    - One or more input FASTQ files (plain or gzipped, depending on implementation).
+    - Command-line arguments for specifying files and options.
+
+Outputs:
+    - Single combined FASTQ file containing all records from input files, in order provided.
+
+Features:
+    - Efficient line-by-line reading to support large files.
+    - Basic validation of FASTQ format.
+    - Optionally preserves original file read order.
+
+Dependencies:
+    - Python 3.x
+    - Standard library modules only (unless otherwise specified in the code).
+
+Limitations:
+    - Assumes input files are valid FASTQ format.
+    - No quality-filtering or read deduplication.
+
+Author:
+    asomohammed (https://github.com/asomohammed)
+    Contributors: See commit history.
+
+License:
+    MIT License (see LICENSE file in repository)
+
+Date:
+    2025-06-13
+
+"""
 import argparse
 import csv
 import gzip
