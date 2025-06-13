@@ -32,14 +32,7 @@ Dependencies:
 Limitations:
     - Assumes input files are valid FASTQ format.
     - No quality-filtering or read deduplication.
-
-Author:
-    asomohammed (https://github.com/asomohammed)
-    Contributors: See commit history.
-
-License:
-    MIT License (see LICENSE file in repository)
-
+    
 Date:
     2025-06-13
 
