@@ -20,7 +20,7 @@ When sequencing large projects, samples are often split across multiple lanes or
 
 ## Folder Structure
 ```text
-fastq_combiner/
+fastq_combiner/v2
 ├── __main__.py         # CLI entry point
 ├── core.py             # Main pipeline logic
 ├── report.py           # Bootstrap 5 HTML report generator
