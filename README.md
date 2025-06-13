@@ -204,8 +204,8 @@ cellranger count --id=sample1 --fastqs=combined/ --sample=Sample1
 - **Scales with file size**: ~100MB RAM per GB of FASTQ data
 
 ### File Size Limits
-- **No practical limits**: Tested with files up to 50GB
-- **Handles thousands of files**: Efficient recursive scanning
+- **Large file size support**: Tested with files up to 50GB
+- **Handles thousands of files**: Recursive scanning
 
 ---
 
