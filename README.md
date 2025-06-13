@@ -1,4 +1,4 @@
-# FASTQ Combiner 🚀
+# FASTQ Combiner
 
 A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible outputs with fuzzy matching for sample names. Perfect for combining multi-lane sequencing data or merging samples across different sequencing runs.
 
@@ -6,18 +6,21 @@ A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible ou
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
+---
+
 ## ✨ Features
 
-- 🚀 **Lightning Fast**: Parallel processing with multi-threading
-- 🧬 **Cell Ranger Ready**: Automatic Illumina-standard naming (`{sample}_S1_R1_001.fastq.gz`)
-- 🎯 **Fuzzy Matching**: Handles typos and naming variations automatically
-- 🔍 **Smart Discovery**: Recursive file scanning with intelligent pattern matching
-- 📊 **Detailed Reports**: Beautiful HTML reports with combination statistics
-- 🛡️ **Error Resilient**: Continues processing even if some samples fail
-- 🔄 **Multi-Lane Support**: Seamlessly combines files from different lanes
-- 📁 **Flexible Input**: Supports various FASTQ naming conventions
+- Parallel processing with multi-threading
+- Automatic Illumina-standard naming (`{sample}_S1_R1_001.fastq.gz`)
+- Handles typos and naming variations automatically
+- Recursive file scanning with intelligent pattern matching
+-  HTML reports with combination statistics
+- Seamlessly combines files from different lanes
+- Supports various FASTQ naming conventions
 
-## 🚀 Quick Start
+---
+
+## Quick Start
 
 ### Installation
 
@@ -43,7 +46,7 @@ Patient002,Sample2_L001,Sample2_L002,Sample2_L003
 Control_Group,Control1,Control2,Negative_Control
 ```
 
-2. **Run the combiner:**
+2. **Run Combiner:**
 ```bash
 python3 fastq_combiner.py mapping.csv -d /path/to/fastq/files
 ```
@@ -60,7 +63,9 @@ combined/
 └── combination_report.html
 ```
 
-## 📖 Detailed Usage
+---
+
+## Detailed Usage
 
 ### Command Line Options
 
@@ -73,7 +78,9 @@ Options:
   -h, --help             Show help message
 ```
 
-### Examples
+---
+
+## Usage Example
 
 #### Combine multi-lane data
 ```bash
@@ -118,18 +125,20 @@ Patient_002,Sample2_L001,Sample2_L002
 Control,Control_Sample
 ```
 
-## 🎯 Fuzzy Matching
+---
+
+## Fuzzy Matching
 
 The tool automatically handles common naming variations:
 
-| CSV Entry | Actual File | Match Type |
-|-----------|-------------|------------|
-| `sample1` | `Sample1_S1_L001_R1_001.fastq.gz` | ✅ Case insensitive |
-| `Patient-1` | `Patient_1_S1_L001_R1_001.fastq.gz` | ✅ Dash/underscore |
-| `ctrl` | `Control_Sample_S1_L001_R1_001.fastq.gz` | ✅ Partial match |
-| `sample_a` | `SampleA_S1_L001_R1_001.fastq.gz` | ✅ Format variation |
+| CSV Entry   | Actual File                              | Match Type       |
+|-------------|------------------------------------------|------------------|
+| `sample1`   | `Sample1_S1_L001_R1_001.fastq.gz`        | Case insensitive |
+| `Patient-1` | `Patient_1_S1_L001_R1_001.fastq.gz`      | Dash/underscore  |
+| `ctrl`      | `Control_Sample_S1_L001_R1_001.fastq.gz` | Partial match    |
+| `sample_a`  | `SampleA_S1_L001_R1_001.fastq.gz`        | Format variation |
 
-## 📊 Supported File Formats
+## Supported File Formats
 
 The tool automatically detects and handles various FASTQ naming conventions:
 
@@ -165,9 +174,9 @@ Sample1.R1.fastq.gz
 Sample1.R2.fastq.gz
 ```
 
-## 🧬 Cell Ranger Integration
+## Cell Ranger Integration
 
-Output files follow Illumina's standard naming convention required by Cell Ranger:
+Output files follow Illumina's standard naming convention as required by Cell Ranger:
 
 ```bash
 # Input files (any format)
@@ -183,32 +192,36 @@ Sample1_S1_R2_001.fastq.gz
 cellranger count --id=sample1 --fastqs=combined/ --sample=Sample1
 ```
 
-## 📈 Performance
+---
+
+## Performance
 
 ### Speed Benchmarks
 - **Sequential processing**: ~5-10 minutes per GB
 - **Parallel processing**: ~2-3 seconds per GB
-- **4x-6x speedup** with multi-threading
 
 ### Memory Usage
-- **Low memory footprint**: Processes files in chunks
 - **Scales with file size**: ~100MB RAM per GB of FASTQ data
 
 ### File Size Limits
 - **No practical limits**: Tested with files up to 50GB
 - **Handles thousands of files**: Efficient recursive scanning
 
-## 📋 Output Reports
+---
+
+## Output Reports
 
 The tool generates detailed HTML reports showing:
 
-- ✅ **Combination statistics**: Read counts, file sizes
-- 🎯 **Fuzzy matches applied**: Shows what corrections were made
-- 📊 **Processing summary**: Success/failure rates
-- 🔍 **File discovery details**: What files were found and used
-- ⚠️ **Warnings and errors**: Missing files, mismatched read counts
+- **Combination statistics**: Read counts, file sizes
+- **Fuzzy matches applied**: Shows what corrections were made
+- **Processing summary**: Success/failure rates
+- **File discovery details**: What files were found and used
+- **Warnings and errors**: Missing files, mismatched read counts
 
-## 🛠️ Advanced Usage
+---
+
+## Advanced Usage
 
 ### Complex Directory Structures
 ```bash
@@ -245,7 +258,9 @@ for sample in $(cut -d',' -f1 samples.csv | tail -n +2); do
 done
 ```
 
-## 🔧 Troubleshooting
+---
+
+## Troubleshooting
 
 ### Common Issues
 
@@ -276,11 +291,6 @@ done
 python3 fastq_combiner.py mapping.csv -d /data/ 2>&1 | tee debug.log
 ```
 
-## 📞 Getting Help
-💬 GitHub Discussions: For questions and ideas
-🐛 GitHub Issues: For bugs and feature requests
-📧 Email: [aso.mohammed@uniklinik-freiburg.de] for urgent matters
-
 ### Development Setup
 ```bash
 git clone https://github.com/yourusername/fastq-combiner.git
@@ -295,19 +305,17 @@ python -m pytest tests/
 # Format code
 black fastq_combiner.py
 ```
+---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
-
-- Built for the bioinformatics community
-- Inspired by common FASTQ processing challenges
-- Designed for Cell Ranger and 10x Genomics workflows
-
-
 ---
 
-*Star ⭐ this repo if it helped you!*
+## Author
 
+**Aso Omer Mohammed**  
+3DBM, Neurosurgery, University Hospital Freiburg  
+GitHub: [@asomohammed](https://github.com/asomohammed)  
+Email: aso.mohammed@uniklinik-freiburg.de
