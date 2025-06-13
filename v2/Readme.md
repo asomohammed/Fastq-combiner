@@ -99,27 +99,6 @@ What it does:
 
 ---
 
-Mapping CSV Format
-
-Your mapping CSV should look like this:
-
-TargetSample1, SourceSample1A, SourceSample1B
-TargetSample2, SourceSample2A
-
-Each line defines:
-- The target sample you want to generate (combined output)
-- The source sample names that should be combined to create this target
-
-Tip: The source sample names should match the beginning of your FASTQ filenames.
-
-Example filename:
-```text
-SourceSample1A_S1_R1_001.fastq.gz
-```
-Then use SourceSample1A as the name in your CSV.
-
----
-
 
 ## License
 
