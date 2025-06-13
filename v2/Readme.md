@@ -53,13 +53,13 @@ TargetSample2, SourceSample2A, SourceSample2B
 
 |Option	          |    Description	                                      |     Default         |
 |-----------------|-------------------------------------------------------|---------------------|
-|-o, --output-dir | Output directory for combined FASTQ files and reports	| combined            |
+|-o/output-dir    | Output directory for combined FASTQ files and reports	| combined            |
 |-d, --search-dirs|	 Directories to recursively search for FASTQ files	  |  Current directory  |
 |--resume	        |  Skip targets where output files already exist	      |  Off                |
 |--dry-run	      |  Simulate run without producing combined files	      |  Off                |
 |--buffer-size    |  Buffer size in bytes for combining files	            |  8 MB               |
 |--compresslevel  |  Gzip compression level for outputs	                  |  6                  |
-|-j, --jobs	      |  Number of parallel threads to use	                  |  All available CPUs |
+|-j/jobs   	      |  Number of parallel threads to use	                  |  All available CPUs |
 |--log-file	      |  Log file path (optional)	                            |  None               |
 |--log	          |  Log level (INFO, DEBUG, WARNING, etc.)	              |  INFO               |
 
