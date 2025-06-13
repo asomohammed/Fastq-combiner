@@ -1,9 +1,8 @@
-
 import argparse
 import os
 import csv
 from pathlib import Path
-from fastq_combiner.utils import count_reads_fastq
+from fastq_combiner.utils import count_reads_fastq, combine_fastq_files, md5sum
 from fastq_combiner.report import generate_html_report
 
 def read_mapping_file(csv_file):
@@ -106,11 +105,35 @@ def run_combiner():
             print(f"  {src}: R1={r1_count} R2={r2_count}")
 
         status = "PASS" if total_r1 == total_r2 else "FAIL"
+
+        # If combining is enabled, produce combined FASTQs
+        combined_r1_output = ""
+        combined_r2_output = ""
+        md5_r1 = ""
+        md5_r2 = ""
+
+        if not args.validate_only:
+            clean_target = target.replace(" ", "_").replace("-", "_")
+            combined_r1_output = os.path.join(args.output_dir, f"{clean_target}_S1_R1_001.fastq.gz")
+            combined_r2_output = os.path.join(args.output_dir, f"{clean_target}_S1_R2_001.fastq.gz")
+            print(f"[{target}] Combining R1 → {combined_r1_output}")
+            print(f"[{target}] Combining R2 → {combined_r2_output}")
+            r1_combined_reads = combine_fastq_files([file_pairs[s]['R1'] for s in matched], combined_r1_output)
+            r2_combined_reads = combine_fastq_files([file_pairs[s]['R2'] for s in matched], combined_r2_output)
+            md5_r1 = md5sum(combined_r1_output)
+            md5_r2 = md5sum(combined_r2_output)
+            print(f"[{target}] Combined R1 reads: {r1_combined_reads}, md5: {md5_r1}")
+            print(f"[{target}] Combined R2 reads: {r2_combined_reads}, md5: {md5_r2}")
+
         results.append({
             "sample": target,
             "r1_count": total_r1,
             "r2_count": total_r2,
-            "status": status
+            "status": status,
+            "combined_r1_output": combined_r1_output,
+            "combined_r2_output": combined_r2_output,
+            "md5_r1": md5_r1,
+            "md5_r2": md5_r2
         })
 
     # Write HTML report
