@@ -8,7 +8,7 @@ A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible ou
 
 ---
 
-## ✨ Features
+## Features
 
 - Parallel processing with multi-threading
 - Automatic Illumina-standard naming (`{sample}_S1_R1_001.fastq.gz`)
