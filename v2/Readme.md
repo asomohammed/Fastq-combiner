@@ -110,7 +110,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you use this tool in your work, please consider citing:
 
-FASTQ Combiner v2.0, https://github.com/asomohammed/fastq_combiner
+FASTQ Combiner v2.0,[ https://github.com/asomohammed/fastq_combiner](https://github.com/asomohammed/Fastq-combiner)
 
 ---
 
