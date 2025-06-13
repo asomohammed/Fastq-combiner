@@ -1,8 +1,6 @@
-## Overview
+**FASTQ Combiner** is a robust, parallelized, and resumable FASTQ file merging pipeline. It enables flexible combination of multiple source FASTQ pairs (R1/R2) into target sample FASTQ pairs, guided by a user-provided CSV mapping.
 
-FASTQ Combiner is a robust, parallelized, and resumable FASTQ file merging pipeline. It enables flexible combination of multiple source FASTQ pairs (R1/R2) into target sample FASTQ pairs, guided by a user-provided CSV mapping.
-
-Features:
+**Features**:
 - Automatic FASTQ pair discovery (supports diverse FASTQ naming conventions)
 - Fuzzy matching of sample names
 - Parallel processing with thread pools
@@ -41,13 +39,9 @@ pip install tqdm psutil rapidfuzz
 python3 fastq_combiner.py mapping.csv -o combined_output_dir -d /path/to/fastq_dir1 /path/to/fastq_dir2 --resume --log INFO
 ```
 
-### Required argument
+### Requirements
 - mapping.csv: CSV file defining the mapping of target sample name to source sample names.
 
-### Example:
-
-TargetSample1, SourceSample1A, SourceSample1B, SourceSample1C
-TargetSample2, SourceSample2A, SourceSample2B
 
 ### Common options
 
