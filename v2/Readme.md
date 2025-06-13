@@ -1,95 +1,143 @@
-**FASTQ Combiner** is a robust, parallelized, and resumable FASTQ file merging pipeline. It enables flexible combination of multiple source FASTQ pairs (R1/R2) into target sample FASTQ pairs, guided by a user-provided CSV mapping.
+## FASTQ Combiner
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://github.com/asomohammed/fastq_combiner/actions/workflows/tests.yml/badge.svg)](https://github.com/asomohammed/fastq_combiner/actions/workflows/tests.yml)
+[![Build Status](https://img.shields.io/badge/status-Stable-brightgreen.svg)]()
+[![Last Commit](https://img.shields.io/github/last-commit/YOUR_USERNAME/fastq_combiner.svg)](https://github.com/asomohammed/fastq_combiner/commits/main)
+[![Issues](https://img.shields.io/github/issues/asomohammed/fastq_combiner.svg)](https://github.com/asomohammed/fastq_combiner/issues)
 
-**Features**:
-- Automatic FASTQ pair discovery (supports diverse FASTQ naming conventions)
-- Fuzzy matching of sample names
-- Parallel processing with thread pools
-- Resume support (skip already existing outputs)
-- Detailed integrity checks (MD5 checksums, read count consistency)
-- Generates HTML, CSV, and JSON reports
 
-Designed for managing large-scale sequencing projects where samples may be split across multiple lanes or batches.
+FASTQ Combiner Pipeline is an easy-to-use tool for combining FASTQ sequencing files and validating the results.
+
+## Overview
+When sequencing large projects, samples are often split across multiple lanes or batches. This tool allows you to:
+- Automatically find matching pairs of FASTQ files (R1 and R2)
+- Combine FASTQ files from multiple sources into a single output FASTQ pair for each sample
+- Validate that your R1 and R2 files match (important for quality control)
+- Generate a clean HTML report summarizing the results
+- Use a “validate-only” mode to quickly check your files before combining them
+
+It is designed to be beginner freindly.
 
 ---
 
-## Features
-- Automatic FASTQ pair discovery
-- Fuzzy matching of sample names (optional fallback to difflib)
-- Parallel processing with configurable number of jobs
-- Resume support
-- Robust logging and reporting
-- Generates HTML, CSV, and JSON summary outputs
-- Supports gzipped and uncompressed FASTQ
-- Efficient I/O with buffer tuning
+## Folder Structure
+```text
+fastq_combiner/
+├── __main__.py              # CLI entry point
+├── core.py                  # Main pipeline logic
+├── report.py                # Bootstrap 5 HTML report generator
+├── utils.py                 # Utility functions (R1/R2 read counting, md5sum, combine_fastq_files)
+tests/
+└── test_fastq_combiner.py   # Unit test scaffold (synthetic FASTQ test)
+requirements.txt             # Dependencies
+README.md                    # This file
+```
 
 ---
 
 ## Installation
+
+1. Download the pipeline
 ```bash
+Clone the repository or download it as a ZIP and extract it:
+
 git clone https://github.com/YOUR_USERNAME/fastq_combiner.git
 cd fastq_combiner
-pip install -r requirements.txt
-pip install tqdm psutil rapidfuzz
 ```
+2. Install required Python packages
+
+Install the required Python packages:
+```bash
+pip install -r requirements.txt
+```
+You need Python 3.8 or higher.
 
 ---
 
 ## Usage
-```bash
-python3 fastq_combiner.py mapping.csv -o combined_output_dir -d /path/to/fastq_dir1 /path/to/fastq_dir2 --resume --log INFO
-```
-
-### Requirements
-- mapping.csv: CSV file defining the mapping of target sample name to source sample names.
-
-
-### Common options
-
-|Option	          |    Description	                                      |     Default         |
-|-----------------|-------------------------------------------------------|---------------------|
-|-o/output-dir    | Output directory for combined FASTQ files and reports	| combined            |
-|-d, --search-dirs|	 Directories to recursively search for FASTQ files	  |  Current directory  |
-|--resume	        |  Skip targets where output files already exist	      |  Off                |
-|--dry-run	      |  Simulate run without producing combined files	      |  Off                |
-|--buffer-size    |  Buffer size in bytes for combining files	            |  8 MB               |
-|--compresslevel  |  Gzip compression level for outputs	                  |  6                  |
-|-j/jobs   	      |  Number of parallel threads to use	                  |  All available CPUs |
-|--log-file	      |  Log file path (optional)	                            |  None               |
-|--log	          |  Log level (INFO, DEBUG, WARNING, etc.)	              |  INFO               |
+- You provide a CSV file that maps your target samples to one or more source sample names.
+- The tool scans your provided directories and automatically finds matching FASTQ files.
+- It can either:
+  - Just validate that R1 and R2 files match (validate-only mode)
+  - Or fully combine the files into a new FASTQ pair (combine mode)
+  - It produces a clean HTML report to summarize what it did.
 
 ---
 
-## Outputs
+## Usage
 
-For each target sample, the script produces:
-- Combined *_R1_001.fastq.gz and *_R2_001.fastq.gz FASTQ files
-- summary.json — full processing metadata
-- summary.csv — tabular summary
-- combination_report.html — interactive HTML report with read counts, status, and integrity checks
+### Validate-only mode (recommended first step)
 
-⸻
+#### This will not create any new FASTQ files. It only checks that your files are valid.
+```bash
+python3 -m fastq_combiner mapping.csv -o combined_output -d /path/to/fastq_dir1 /path/to/fastq_dir2 --validate-only
+```
+What it does:
+- Scans the FASTQ directories you provide
+- Looks for matching pairs of R1 and R2 FASTQ files
+- For each target sample in your CSV, finds the matching sources
+- Counts the reads in R1 and R2 and checks that they match
+- Generates an HTML report at:
 
-## Reporting
+```text
+combined_output/combination_report.html
+```
 
-The HTML report provides:
-- Total number of targets processed
-- Total number of reads combined
-- Per-target status (Success/Failed)
-- Read counts per target
-- Fuzzy matches used (if applicable)
-- Links to summary CSV/JSON files
+### Full combining mode (after testing validate-only)
+
+```bash
+python3 -m fastq_combiner mapping.csv -o combined_output -d /path/to/fastq_dir1 /path/to/fastq_dir2
+```
+
+What it does:
+- Same steps as validate-only
+- PLUS combines the matching FASTQ files into a new R1 and R2 FASTQ pair per target sample
+- Outputs the new combined FASTQ files to your combined_output/ directory
+
+Important: You need to add your combine_fastq_files logic (already scaffolded in the code) to perform the actual combining.
+
+---
+
+## Mapping CSV Format
+
+Your mapping CSV should look like this:
+
+TargetSample1, SourceSample1A, SourceSample1B
+TargetSample2, SourceSample2A
+
+Each line defines:
+- The target sample you want to generate (combined output)
+- The source sample names that should be combined to create this target
+
+Tip: The source sample names should match the beginning of your FASTQ filenames.
+
+Example filename: "SourceSample1A_S1_R1_001.fastq.gz"
+
+Then use SourceSample1A as the name in your CSV.
+
+---
+
+## Testing
+
+The package includes a small unit test to validate that the FASTQ read counting works.
+
+Run the test with:
+```bash
+pytest tests/
+```
 
 ---
 
 ## License
 
-MIT License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## Citation
 
-If you use this tool in your work, please cite it appropriately:
+If you use this tool in your work, please consider citing:
 
 FASTQ Combiner v2.0, https://github.com/asomohammed/fastq_combiner
 
