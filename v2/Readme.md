@@ -41,8 +41,7 @@ README.md               # This file
 
 Clone the repository or download it as a ZIP and extract it:
 ```bash
-git clone https://github.com/asomohammed/v2/fastq_combiner.git
-cd fastq_combiner
+git clone --filter=blob:none --sparse https://github.com/asomohammed/Fastq-combiner.git && cd Fastq-combiner && git sparse-checkout set v2 && mv v2/* . && rm -rf v2 .git
 ```
 2. Install required Python packages
 
