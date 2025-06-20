@@ -1,5 +1,8 @@
 # FASTQ Combiner
 
+<img src="https://github.com/user-attachments/assets/c2ad7861-90f3-4448-b3a1-155245dd449e" alt="fastq_combiner_image" width="100" height="100">
+
+
 A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible outputs with fuzzy matching for sample names. Perfect for combining multi-lane sequencing data or merging samples across different sequencing runs.
 
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
