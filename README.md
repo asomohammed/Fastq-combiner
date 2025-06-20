@@ -18,6 +18,8 @@ A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible ou
 - Seamlessly combines files from different lanes
 - Supports various FASTQ naming conventions
 
+![carbon](https://github.com/user-attachments/assets/115748c7-09b4-4dcc-81a5-64885cf9c9bc)
+
 ---
 
 ## Quick Start
@@ -38,7 +40,6 @@ python3 fastq_combiner.py --help
 
 ### Basic Usage
 
-![carbon](https://github.com/user-attachments/assets/115748c7-09b4-4dcc-81a5-64885cf9c9bc)
 
 
 1. **Create a mapping CSV file:**
