@@ -38,6 +38,9 @@ python3 fastq_combiner.py --help
 
 ### Basic Usage
 
+![carbon](https://github.com/user-attachments/assets/115748c7-09b4-4dcc-81a5-64885cf9c9bc)
+
+
 1. **Create a mapping CSV file:**
 ```csv
 target_sample,source_file1,source_file2,source_file3
