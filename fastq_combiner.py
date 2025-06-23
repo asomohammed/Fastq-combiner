@@ -19,6 +19,9 @@ import cProfile
 import pstats
 import platform
 import importlib
+import socket
+import getpass
+import html as html_escape
 
 BUFFER_SIZE = 8 * 1024 * 1024  # Default, can be overridden by CLI
 
@@ -281,144 +284,165 @@ def sanitize_sample_name(sample_name):
     
     return clean_name
 
-def generate_html_report(output_dir, mapping, file_pairs, combination_stats, missing_files, fuzzy_matches):
-    """Generate HTML report with fuzzy matching info"""
-    
-    html_path = os.path.join(output_dir, "combination_report.html")
-    
+def generate_html_report(output_dir, mapping, file_pairs, combination_stats, missing_files, fuzzy_matches, cli_args=None, threads=4):
+    """Generate HTML report with detailed info and system/run metadata"""
     total_targets = len(mapping)
     total_sources = sum(len(sources) for sources in mapping.values())
     successful_combinations = len(combination_stats)
     total_combined_reads = sum(stats['total_reads'] for stats in combination_stats.values())
-    
+    total_input_files = sum(len(stats['source_files']) for stats in combination_stats.values())
+    total_output_files = 2 * successful_combinations
+    total_data_processed = sum(
+        os.path.getsize(stats['r1_output']) + os.path.getsize(stats['r2_output'])
+        for stats in combination_stats.values() if os.path.exists(stats['r1_output']) and os.path.exists(stats['r2_output'])
+    )
+    avg_read_length = None
+    try:
+        read_lengths = []
+        for stats in combination_stats.values():
+            for s in stats['source_files']:
+                for read_type in ['R1', 'R2']:
+                    fpath = file_pairs[s][read_type]
+                    opener = gzip.open if fpath.endswith('.gz') else open
+                    with opener(fpath, 'rt') as f:
+                        f.readline()  # header
+                        seq = f.readline().strip()
+                        if seq:
+                            read_lengths.append(len(seq))
+                            break
+        if read_lengths:
+            avg_read_length = sum(read_lengths) / len(read_lengths)
+    except Exception:
+        avg_read_length = None
+    # System/run metadata
+    metadata = {
+        'Python version': sys.version.split()[0],
+        'Tool version': '1.0.0',
+        'User': getpass.getuser(),
+        'Host': socket.gethostname(),
+        'Platform': platform.platform(),
+        'Date/time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'Threads used': threads,
+        'CLI args': ' '.join(cli_args) if cli_args else '',
+        'Output directory': os.path.abspath(output_dir),
+    }
+    # Skipped/failed samples
+    failed_samples = []
+    for target in mapping:
+        if target not in combination_stats:
+            reason = "No sources found"
+            if target in missing_files:
+                reason = "Missing/unreadable source files"
+            failed_samples.append((target, reason))
+    # Pre-format avg_read_length for summary card
+    if avg_read_length:
+        avg_read_length_str = f"{avg_read_length:.1f}"
+    else:
+        avg_read_length_str = "N/A"
+    # HTML content
+    html_path = os.path.join(output_dir, "combination_report.html")
     html_content = f"""
 <!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset=\"UTF-8\">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
     <title>FASTQ Combination Report</title>
+    <script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>
     <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f5f5f5;
-            color: #333;
-        }}
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
-        }}
-        .header {{
-            text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #2196F3;
-        }}
-        .header h1 {{
-            color: #1976D2;
-            margin: 0;
-            font-size: 2.5em;
-        }}
-        .summary-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-        .summary-card {{
-            background: linear-gradient(135deg, #2196F3, #1976D2);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            text-align: center;
-        }}
-        .summary-card h3 {{
-            margin: 0 0 10px 0;
-            font-size: 2em;
-        }}
-        .section h2 {{
-            color: #1976D2;
-            border-bottom: 2px solid #2196F3;
-            padding-bottom: 10px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }}
-        th, td {{
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }}
-        th {{
-            background-color: #2196F3;
-            color: white;
-        }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; color: #333; }}
+        .container {{ max-width: 1400px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }}
+        .header {{ text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #2196F3; }}
+        .header h1 {{ color: #1976D2; margin: 0; font-size: 2.5em; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }}
+        .summary-card {{ background: linear-gradient(135deg, #2196F3, #1976D2); color: white; padding: 20px; border-radius: 8px; text-align: center; }}
+        .summary-card h3 {{ margin: 0 0 10px 0; font-size: 2em; }}
+        .section h2 {{ color: #1976D2; border-bottom: 2px solid #2196F3; padding-bottom: 10px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background-color: #2196F3; color: white; }}
         .success {{ color: #4CAF50; font-weight: bold; }}
         .warning {{ color: #FF9800; font-weight: bold; }}
         .error {{ color: #f44336; font-weight: bold; }}
-        .filepath {{
-            font-family: 'Courier New', monospace;
-            background-color: #f0f0f0;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.8em;
-        }}
+        .filepath {{ font-family: 'Courier New', monospace; background-color: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; }}
+        .collapsible {{ background-color: #eee; color: #444; cursor: pointer; padding: 10px; width: 100%; border: none; text-align: left; outline: none; font-size: 1em; margin-top: 10px; }}
+        .active, .collapsible:hover {{ background-color: #ccc; }}
+        .content {{ padding: 0 18px; display: none; overflow: hidden; background-color: #f9f9f9; }}
+        .search-container {{ margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px; }}
+        .search-container input {{ padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px; width: 300px; }}
+        .search-container select {{ padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 4px; }}
+        .search-container button {{ padding: 8px 16px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; }}
+        .search-container button:hover {{ background-color: #1976D2; }}
+        .chart-container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
+        .chart-card {{ background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        .hidden {{ display: none; }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
+    <div class=\"container\">
+        <div class=\"header\">
             <h1>🚀 FASTQ Combination Report - OPTIMIZED</h1>
-            <p>Cell Ranger Compatible | Streaming I/O | Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p>Cell Ranger Compatible | Streaming I/O | Generated on {metadata['Date/time']}</p>
         </div>
-
-        <div class="summary-grid">
-            <div class="summary-card">
-                <h3>{total_targets:,}</h3>
-                <p>Target Samples</p>
-            </div>
-            <div class="summary-card">
-                <h3>{successful_combinations:,}</h3>
-                <p>Successful</p>
-            </div>
-            <div class="summary-card">
-                <h3>{len(fuzzy_matches):,}</h3>
-                <p>Fuzzy Matches</p>
-            </div>
-            <div class="summary-card">
-                <h3>{total_combined_reads:,}</h3>
-                <p>Total Reads</p>
+        <div class=\"section\">
+            <h2>🛠️ System & Run Metadata</h2>
+            <table>"""
+    for k, v in metadata.items():
+        html_content += f"<tr><th>{html_escape.escape(str(k))}</th><td>{html_escape.escape(str(v))}</td></tr>"
+    html_content += "</table></div>"
+    html_content += f"""
+        <div class=\"summary-grid\">
+            <div class=\"summary-card\"><h3>{total_targets:,}</h3><p>Target Samples</p></div>
+            <div class=\"summary-card\"><h3>{successful_combinations:,}</h3><p>Successful</p></div>
+            <div class=\"summary-card\"><h3>{len(fuzzy_matches):,}</h3><p>Fuzzy Matches</p></div>
+            <div class=\"summary-card\"><h3>{total_combined_reads:,}</h3><p>Total Reads</p></div>
+            <div class=\"summary-card\"><h3>{total_input_files:,}</h3><p>Input Files</p></div>
+            <div class=\"summary-card\"><h3>{total_output_files:,}</h3><p>Output Files</p></div>
+            <div class=\"summary-card\"><h3>{total_data_processed/1024/1024/1024:.2f} GB</h3><p>Data Processed</p></div>
+            <div class=\"summary-card\"><h3>{avg_read_length_str}</h3><p>Avg Read Length</p></div>
+        </div>
+        <div class=\"section\">
+            <h2>📊 Visualizations</h2>
+            <div class=\"chart-container\">
+                <div class=\"chart-card\">
+                    <h3>Success vs Failure</h3>
+                    <canvas id=\"successChart\" width=\"400\" height=\"300\"></canvas>
+                </div>
+                <div class=\"chart-card\">
+                    <h3>Read Count Distribution</h3>
+                    <canvas id=\"readChart\" width=\"400\" height=\"300\"></canvas>
+                </div>
             </div>
         </div>
-
-        <div class="section">
+        <div class=\"section\">
             <h2>📊 Combination Results</h2>
-            <table>
+            <div class=\"search-container\">
+                <input type=\"text\" id=\"searchInput\" placeholder=\"Search by target name...\" onkeyup=\"filterTable()\">
+                <select id=\"statusFilter\" onchange=\"filterTable()\">
+                    <option value=\"\">All Status</option>
+                    <option value=\"success\">Success</option>
+                    <option value=\"failed\">Failed</option>
+                </select>
+                <button onclick=\"clearFilters()\">Clear Filters</button>
+            </div>
+            <table id=\"resultsTable\">
                 <tr>
                     <th>Target Sample</th>
                     <th>Cell Ranger Output</th>
                     <th>Source Matches</th>
                     <th>Total Reads</th>
                     <th>Status</th>
+                    <th>Details</th>
                 </tr>
     """
-    
     for target, source_paths in mapping.items():
         clean_target = sanitize_sample_name(target)
-        
+        details_id = f"details_{clean_target}"
+        status_class = "success" if target in combination_stats else "failed"
         if target in combination_stats:
             stats = combination_stats[target]
             status = f'<span class="success">✓ Success</span>'
             total_reads = f'{stats["total_reads"]:,}'
-            
             # Show what sources were matched
             matched_sources = []
             for source_path in source_paths:
@@ -427,31 +451,69 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
                     matched_sources.append(f'"{original}" → {os.path.basename(matched)} <span class="warning">(fuzzy)</span>')
                 else:
                     matched_sources.append(f'{source_path} <span class="success">(exact)</span>')
-            
             source_matches = "<br>".join(matched_sources)
-            cell_ranger_files = f'{clean_target}_S1_R1_001.fastq.gz<br>{clean_target}_S1_R2_001.fastq.gz'
-            
+            cell_ranger_files = f'<a href="{clean_target}_S1_R1_001.fastq.gz">{clean_target}_S1_R1_001.fastq.gz</a><br><a href="{clean_target}_S1_R2_001.fastq.gz">{clean_target}_S1_R2_001.fastq.gz</a>'
         else:
             status = f'<span class="error">✗ Failed</span>'
             total_reads = "0"
             source_matches = "No matches found"
             cell_ranger_files = "Not generated"
-        
         html_content += f"""
-                <tr>
+                <tr class=\"row {status_class}\" data-target=\"{target}\" data-status=\"{status_class}\">
                     <td><strong>{target}</strong></td>
                     <td class="filepath">{cell_ranger_files}</td>
                     <td>{source_matches}</td>
                     <td>{total_reads}</td>
                     <td>{status}</td>
-                </tr>
+                    <td><button class='collapsible'>Show Details</button><div class='content' id='{details_id}'>
         """
-    
+        # Per-source file details
+        if target in combination_stats:
+            html_content += "<table><tr><th>Source File</th><th>Type</th><th>Size (MB)</th><th>Read Count</th><th>Match</th><th>Warnings</th></tr>"
+            for s in combination_stats[target]['source_files']:
+                for read_type in ['R1', 'R2']:
+                    fpath = file_pairs[s][read_type]
+                    ftype = read_type
+                    try:
+                        size_mb = os.path.getsize(fpath) / 1024 / 1024
+                    except Exception:
+                        size_mb = 'N/A'
+                    try:
+                        opener = gzip.open if fpath.endswith('.gz') else open
+                        with opener(fpath, 'rt') as f:
+                            count = 0
+                            while True:
+                                header = f.readline()
+                                if not header:
+                                    break
+                                seq = f.readline()
+                                plus = f.readline()
+                                qual = f.readline()
+                                if header.startswith('@') and seq and plus and qual:
+                                    count += 1
+                        read_count = count
+                    except Exception:
+                        read_count = 'N/A'
+                    match_type = 'Fuzzy' if s in fuzzy_matches else 'Exact'
+                    warnings = []
+                    if read_count == 'N/A':
+                        warnings.append('Unreadable')
+                    if size_mb == 'N/A':
+                        warnings.append('Missing')
+                    html_content += f"<tr><td class='filepath'>{fpath}</td><td>{ftype}</td><td>{size_mb}</td><td>{read_count}</td><td>{match_type}</td><td>{', '.join(warnings) if warnings else '-'}</td></tr>"
+            html_content += "</table>"
+        html_content += "</div></td></tr>"
     html_content += """
             </table>
         </div>
     """
-    
+    # Skipped/failed samples
+    if failed_samples:
+        html_content += f"<div class='section'><h2>❌ Skipped/Failed Samples</h2><table><tr><th>Target</th><th>Reason</th></tr>"
+        for target, reason in failed_samples:
+            html_content += f"<tr><td>{target}</td><td>{reason}</td></tr>"
+        html_content += "</table></div>"
+    # Fuzzy matches
     if fuzzy_matches:
         html_content += f"""
         <div class="section">
@@ -464,7 +526,6 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
                     <th>Confidence</th>
                 </tr>
         """
-        
         for source_path, (original, matched) in fuzzy_matches.items():
             confidence = "High" if original.lower() in matched.lower() else "Medium"
             html_content += f"""
@@ -474,12 +535,155 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
                     <td><span class="warning">{confidence}</span></td>
                 </tr>
             """
-        
         html_content += """
             </table>
         </div>
         """
+    # JS for collapsible sections, search/filter, and charts
+    html_content += """
+    <script>
+    // Collapsible sections
+    var coll = document.getElementsByClassName("collapsible");
+    var i;
+    for (i = 0; i < coll.length; i++) {
+      coll[i].addEventListener("click", function() {
+        this.classList.toggle("active");
+        var content = this.nextElementSibling;
+        if (content.style.display === "block") {
+          content.style.display = "none";
+        } else {
+          content.style.display = "block";
+        }
+      });
+    }
     
+    // Search and filter functionality
+    function filterTable() {
+      var input = document.getElementById("searchInput");
+      var statusFilter = document.getElementById("statusFilter");
+      var filter = input.value.toLowerCase();
+      var statusValue = statusFilter.value;
+      var table = document.getElementById("resultsTable");
+      var rows = table.getElementsByTagName("tr");
+      
+      for (var i = 1; i < rows.length; i++) {
+        var row = rows[i];
+        var target = row.getAttribute("data-target");
+        var status = row.getAttribute("data-status");
+        var txtValue = target;
+        
+        var showRow = true;
+        
+        // Text filter
+        if (filter && !txtValue.toLowerCase().includes(filter)) {
+          showRow = false;
+        }
+        
+        // Status filter
+        if (statusValue && status !== statusValue) {
+          showRow = false;
+        }
+        
+        if (showRow) {
+          row.style.display = "";
+        } else {
+          row.style.display = "none";
+        }
+      }
+    }
+    
+    function clearFilters() {
+      document.getElementById("searchInput").value = "";
+      document.getElementById("statusFilter").value = "";
+      filterTable();
+    }
+    
+    // Charts
+    document.addEventListener('DOMContentLoaded', function() {
+      // Success vs Failure Chart
+      var successCtx = document.getElementById('successChart').getContext('2d');
+      var successChart = new Chart(successCtx, {
+        type: 'pie',
+        data: {
+          labels: ['Successful', 'Failed'],
+          datasets: [{
+            data: ["""
+    html_content += f"{successful_combinations}, {len(failed_samples)}"
+    html_content += """],
+            backgroundColor: ['#4CAF50', '#f44336'],
+            borderWidth: 2,
+            borderColor: '#fff'
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              position: 'bottom'
+            }
+          }
+        }
+      });
+      
+      // Read Count Distribution Chart
+      var readCtx = document.getElementById('readChart').getContext('2d');
+      var readChart = new Chart(readCtx, {
+        type: 'bar',
+        data: {
+          labels: ["""
+    # Get read counts for successful samples
+    read_counts = []
+    for target in mapping:
+        if target in combination_stats:
+            read_counts.append(combination_stats[target]['total_reads'])
+    
+    # Format labels and data for chart
+    if read_counts:
+        labels_str = f"'{', '.join(str(x) for x in read_counts[:10])}'"  # Limit to first 10
+        data_str = f"{', '.join(str(x) for x in read_counts[:10])}"
+    else:
+        labels_str = "'No data'"
+        data_str = "0"
+    
+    html_content += f"{labels_str}"
+    html_content += """],
+          datasets: [{
+            label: 'Read Count',
+            data: ["""
+    html_content += f"{data_str}"
+    html_content += """],
+            backgroundColor: '#2196F3',
+            borderColor: '#1976D2',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Read Count'
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: 'Sample Index'
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              display: false
+            }
+          }
+        }
+      });
+    });
+    </script>
+    """
     html_content += f"""
         <div class="footer" style="text-align: center; margin-top: 40px; color: #666;">
             <p><strong>⚡ OPTIMIZED FOR SPEED!</strong> Streaming I/O with minimal RAM usage</p>
@@ -490,10 +694,8 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
 </body>
 </html>
     """
-    
     with open(html_path, 'w') as f:
         f.write(html_content)
-    
     return html_path
 
 def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, dry_run=False, force=False, r1_patterns=None, r2_patterns=None, threads=4):
@@ -672,7 +874,7 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
         if target not in final_mapping:
             missing_files.extend(sources)
     
-    html_report = generate_html_report(output_dir, mapping, file_pairs, combination_stats, missing_files, fuzzy_matches)
+    html_report = generate_html_report(output_dir, mapping, file_pairs, combination_stats, missing_files, fuzzy_matches, cli_args=None, threads=threads)
     
     # Final summary with performance metrics
     total_processing_time = sum(stats['processing_time'] for stats in combination_stats.values())
