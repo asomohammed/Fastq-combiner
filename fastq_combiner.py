@@ -13,6 +13,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 import logging
 from tqdm import tqdm
+import yaml
+import time
+import cProfile
+import pstats
+import platform
+import importlib
 
 BUFFER_SIZE = 8 * 1024 * 1024  # Default, can be overridden by CLI
 
@@ -21,6 +27,11 @@ logging.basicConfig(
     level=logging.INFO,
     format='[%(levelname)s] %(message)s'
 )
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 def read_mapping_file(csv_file):
     """Read CSV mapping file and return dictionary of target -> [source file paths]"""
@@ -485,7 +496,7 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
     
     return html_path
 
-def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, dry_run=False, force=False, r1_patterns=None, r2_patterns=None):
+def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, dry_run=False, force=False, r1_patterns=None, r2_patterns=None, threads=4):
     """Main function with streaming optimizations"""
     
     logging.info("⚡ FASTQ File Combiner - STREAMING OPTIMIZED")
@@ -548,14 +559,14 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
     
     # Validate all source files exist and are readable
     missing_files = []
+    invalid_targets = set()
     for target, matched_sources in final_mapping.items():
         for s in matched_sources:
             for read_type in ['R1', 'R2']:
                 fpath = file_pairs[s][read_type]
-                if not os.path.exists(fpath):
+                if not os.path.exists(fpath) or not os.access(fpath, os.R_OK):
                     missing_files.append(fpath)
-                elif not os.access(fpath, os.R_OK):
-                    missing_files.append(fpath)
+                    invalid_targets.add(target)
     if missing_files:
         logging.error(f"Missing or unreadable files detected: {len(missing_files)}")
         for f in missing_files:
@@ -564,10 +575,14 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
             logging.info("Dry run: stopping due to missing files.")
             return
         else:
-            logging.warning("Continuing, but some samples may fail.")
+            logging.warning("Some samples will be skipped due to missing/unreadable files.")
     if dry_run:
         logging.info("Dry run complete. All files checked.")
         return
+    # Remove invalid targets from final_mapping
+    for target in invalid_targets:
+        if target in final_mapping:
+            del final_mapping[target]
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -626,7 +641,7 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
         return result
 
     # Parallel processing with progress bar
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = []
         for target, matched_sources in final_mapping.items():
             futures.append(executor.submit(process_target, target, matched_sources))
@@ -695,6 +710,9 @@ Examples:
   
   # Dry run (validate only)
   python3 fastq_combiner.py mapping.csv --dry-run
+  
+  # Use a YAML config file
+  python3 fastq_combiner.py --config config.yaml
 
 ⚡ OPTIMIZATIONS:
   • Streaming I/O - processes files without loading into RAM
@@ -715,9 +733,60 @@ Examples:
     parser.add_argument('--force', action='store_true', help='Overwrite output files if they exist')
     parser.add_argument('--r1-pattern', action='append', help='Custom glob pattern(s) for R1 files (can be used multiple times)')
     parser.add_argument('--r2-pattern', action='append', help='Custom glob pattern(s) for R2 files (can be used multiple times)')
+    parser.add_argument('--threads', type=int, default=4, help='Number of parallel worker threads (default: 4)')
+    parser.add_argument('--config', type=str, help='YAML config file with options')
+    parser.add_argument('--diagnostics', action='store_true', help='Run environment diagnostics and exit')
     
     args = parser.parse_args()
     
+    if getattr(args, 'diagnostics', False):
+        print("=== FASTQ Combiner Diagnostics ===")
+        print(f"Python version: {platform.python_version()} ({platform.python_implementation()})")
+        print(f"Platform: {platform.system()} {platform.release()} ({platform.machine()})")
+        print(f"Executable: {sys.executable}")
+        # Check required packages
+        required = ['tqdm', 'yaml']
+        for pkg in required:
+            try:
+                importlib.import_module(pkg)
+                print(f"[OK] {pkg} installed")
+            except ImportError:
+                print(f"[MISSING] {pkg} NOT installed")
+        # Disk space
+        total, used, free = shutil.disk_usage('.')
+        print(f"Disk space: {free // (1024**3)} GB free / {total // (1024**3)} GB total")
+        # Memory (if available)
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            print(f"Memory: {mem.available // (1024**2)} MB free / {mem.total // (1024**2)} MB total")
+        except ImportError:
+            print("[INFO] psutil not installed, skipping memory check.")
+        # File descriptor limit (Unix only)
+        if resource is not None:
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+                print(f"File descriptor limit: {soft} (soft), {hard} (hard)")
+            except Exception as e:
+                print(f"[WARN] Could not get file descriptor limit: {e}")
+        print("=== End diagnostics ===")
+        sys.exit(0)
+    
+    config = {}
+    if args.config:
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+    # Helper to get value: CLI > config > default
+    def get_opt(opt, default=None):
+        return getattr(args, opt) if getattr(args, opt) is not None else config.get(opt, default)
+    csv_file = get_opt('csv_file')
+    output_dir = get_opt('output_dir', 'combined')
+    search_dirs = get_opt('search_dirs')
+    dry_run = get_opt('dry_run', False)
+    force = get_opt('force', False)
+    r1_patterns = get_opt('r1_pattern')
+    r2_patterns = get_opt('r2_pattern')
+    threads = get_opt('threads', 4)
     if not os.path.exists(args.csv_file):
         logging.error(f"Error: CSV file '{args.csv_file}' not found!")
         return
@@ -731,7 +800,8 @@ Examples:
         dry_run=args.dry_run,
         force=args.force,
         r1_patterns=args.r1_pattern,
-        r2_patterns=args.r2_pattern
+        r2_patterns=args.r2_pattern,
+        threads=args.threads
     )
 
 if __name__ == "__main__":

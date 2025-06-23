@@ -2,3 +2,4 @@
 # This tool uses only Python standard library
 
 tqdm
+pyyaml

@@ -7,8 +7,16 @@ def count_reads_fastq(fastq_file: str) -> int:
     count = 0
     opener = gzip.open if fastq_file.endswith('.gz') else open
     with opener(fastq_file, 'rt') as f:
-        for i, line in enumerate(f):
-            if i % 4 == 0 and line.startswith('@'):
+        while True:
+            # Read all four lines of a FASTQ record
+            header = f.readline()
+            if not header:
+                break
+            seq = f.readline()
+            plus = f.readline()
+            qual = f.readline()
+            # Only count if all four lines are present and valid
+            if (header.startswith('@') and seq and plus and qual):
                 count += 1
     return count
 

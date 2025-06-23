@@ -115,6 +115,53 @@ python3 fastq_combiner.py mapping.csv --force
 python3 fastq_combiner.py mapping.csv --r1-pattern "*_R1_*.fq.gz" --r2-pattern "*_R2_*.fq.gz"
 ```
 
+### Use as a CLI Tool (after pip install .)
+```bash
+pip install .
+fastq-combiner mapping.csv -d /data/run1 /data/run2
+```
+
+### Use with a YAML Config File
+Example `config.yaml`:
+```yaml
+csv_file: mapping.csv
+output_dir: combined
+search_dirs:
+  - /data/run1
+  - /data/run2
+buffer_size: 16777216
+threads: 8
+force: true
+r1_pattern:
+  - "*_R1_*.fastq.gz"
+r2_pattern:
+  - "*_R2_*.fastq.gz"
+```
+Run with:
+```bash
+python3 fastq_combiner.py --config config.yaml
+```
+
+### Docker Usage
+Build the image:
+```bash
+docker build -t fastq-combiner .
+```
+Run the tool (mount your data):
+```bash
+docker run --rm -v /path/to/data:/data fastq-combiner mapping.csv -d /data
+```
+
+### Diagnostics and Profiling
+- Run environment diagnostics:
+  ```bash
+  python3 fastq_combiner.py --diagnostics
+  ```
+- Enable performance profiling:
+  ```bash
+  python3 fastq_combiner.py mapping.csv --profile
+  ```
+
 ### CSV Format
 
 The tool accepts flexible CSV formats:
@@ -275,51 +322,33 @@ done
 
 ---
 
-## Troubleshooting
+## Troubleshooting & FAQ
 
-### Common Issues
+**Q: I get `ModuleNotFoundError: No module named 'tqdm'` or `No module named 'yaml'`.**
+- A: Run `pip install -r requirements.txt` to install all dependencies.
 
-#### Files not found
+**Q: The script says 'No FASTQ files found!' but my files exist.**
+- A: Make sure you use the `-d` flag to specify the correct search directory.
+
+**Q: Permission denied or unreadable file errors?**
+- A: Check file permissions. The script will skip files it cannot read.
+
+**Q: How do I use a config file?**
+- A: See the YAML example above and use `--config config.yaml`.
+
+**Q: How do I run in Docker?**
+- A: See the Docker usage example above. Mount your data with `-v`.
+
+**Q: How do I check my environment?**
+- A: Use `--diagnostics` to print Python version, dependencies, disk space, and more.
+
+---
+
+For more details, see the script's help:
 ```bash
-# Check file discovery
-python3 fastq_combiner.py mapping.csv -d /data/ 2>&1 | grep "Found"
+python3 fastq_combiner.py --help
 ```
 
-#### Permission errors
-```bash
-# Fix permissions
-chmod -R 755 /path/to/fastq/files/
-```
-
-#### Memory issues with large files
-```bash
-# Process smaller batches
-split -l 10 large_mapping.csv batch_
-for batch in batch_*; do
-    python3 fastq_combiner.py "$batch" -d /data/
-done
-```
-
-### Debug Mode
-```bash
-# Verbose output for debugging
-python3 fastq_combiner.py mapping.csv -d /data/ 2>&1 | tee debug.log
-```
-
-### Development Setup
-```bash
-git clone https://github.com/yourusername/fastq-combiner.git
-cd fastq-combiner
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-python -m pytest tests/
-
-# Format code
-black fastq_combiner.py
-```
 ---
 
 ## License
