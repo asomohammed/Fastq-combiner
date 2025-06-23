@@ -229,7 +229,10 @@ def combine_fastq_files_streaming(source_files, output_file, read_type='R1'):
                             if not chunk:
                                 break
                             
-                            out_f.write(chunk)
+                            if isinstance(chunk, bytes):
+                                out_f.write(chunk)  # type: ignore
+                            else:
+                                raise TypeError(f"Expected bytes, got {type(chunk)}")
                             bytes_processed += len(chunk)
                             total_bytes += len(chunk)
                             

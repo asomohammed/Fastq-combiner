@@ -1,6 +1,6 @@
 import gzip
 import os
-from fastq_combiner.utils import count_reads_fastq
+from v2.fastq_combiner.utils import count_reads_fastq
 
 def generate_synthetic_fastq(path, num_reads=10):
     opener = gzip.open if str(path).endswith('.gz') else open
