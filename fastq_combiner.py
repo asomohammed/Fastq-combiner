@@ -11,15 +11,22 @@ import glob
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
+import logging
+from tqdm import tqdm
 
-# Optimized buffer size for streaming (8MB chunks)
-BUFFER_SIZE = 8 * 1024 * 1024  
+BUFFER_SIZE = 8 * 1024 * 1024  # Default, can be overridden by CLI
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
 
 def read_mapping_file(csv_file):
     """Read CSV mapping file and return dictionary of target -> [source file paths]"""
     mapping = defaultdict(list)
     
-    print(f"Reading mapping file: {csv_file}")
+    logging.info(f"Reading mapping file: {csv_file}")
     
     with open(csv_file, 'r') as f:
         reader = csv.reader(f)
@@ -27,7 +34,7 @@ def read_mapping_file(csv_file):
         # Check if first row is header
         first_row = next(reader)
         if first_row[0].lower() in ['target', 'target_sample', 'output', 'sample']:
-            print("  Detected header row, skipping...")
+            logging.info("  Detected header row, skipping...")
         else:
             # Process first row as data
             target = first_row[0].strip()
@@ -43,43 +50,39 @@ def read_mapping_file(csv_file):
             sources = [f.strip() for f in row[1:] if f.strip()]
             
             if not sources:
-                print(f"  Warning: No source files for target '{target}' on row {row_num}")
+                logging.warning(f"  No source files for target '{target}' on row {row_num}")
                 continue
                 
             mapping[target].extend(sources)
     
-    print(f"Loaded {len(mapping)} target samples")
+    logging.info(f"Loaded {len(mapping)} target samples")
     return dict(mapping)
 
-def find_fastq_files_fast(search_dirs):
+def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
     """
     Fast file discovery using glob patterns
     Returns dict: {sample_base: {'R1': path, 'R2': path}}
     """
-    print("\n🔍 Scanning for FASTQ files...")
-    
+    logging.info("\n🔍 Scanning for FASTQ files...")
     if not search_dirs:
         search_dirs = ["."]
-    
     file_pairs = {}
-    
-    # Common FASTQ patterns - optimized for speed
-    patterns = [
-        "*_R1_*.fastq.gz",
-        "*_R1.fastq.gz", 
-        "*_1.fastq.gz",
-        "*.R1.fastq.gz"
+    # Use custom patterns if provided, else default
+    default_r1_patterns = [
+        "*_R1_*.fastq.gz", "*_R1.fastq.gz", "*_1.fastq.gz", "*.R1.fastq.gz",
+        "*_R1_*.fastq", "*_R1.fastq", "*_1.fastq", "*.R1.fastq"
     ]
-    
+    r1_patterns = r1_patterns or default_r1_patterns
+    default_r2_patterns = [
+        p.replace('R1', 'R2').replace('_1', '_2').replace('.R1', '.R2') for p in default_r1_patterns
+    ]
+    r2_patterns = r2_patterns or default_r2_patterns
     for search_dir in search_dirs:
-        print(f"  Scanning: {os.path.abspath(search_dir)}")
-        
-        for pattern in patterns:
-            full_pattern = os.path.join(search_dir, "**", pattern)
+        logging.info(f"  Scanning: {os.path.abspath(search_dir)}")
+        for r1_pattern in r1_patterns:
+            full_pattern = os.path.join(search_dir, "**", r1_pattern)
             r1_files = glob.glob(full_pattern, recursive=True)
-            
             for r1_file in r1_files:
-                # Extract sample base name using multiple strategies
                 basename = os.path.basename(r1_file)
                 
                 # Strategy 1: Standard Illumina pattern (sample_S1_R1_001.fastq.gz)
@@ -100,14 +103,23 @@ def find_fastq_files_fast(search_dirs):
                 else:
                     continue
                 
-                # Find corresponding R2 file
-                r2_candidates = [
+                # Find corresponding R2 file using custom or default patterns
+                r2_candidates = []
+                for r2_pattern in r2_patterns:
+                    # Try to match R2 in the same directory with the same sample base
+                    r2_candidate = os.path.join(os.path.dirname(r1_file), basename.replace('R1', 'R2').replace('_1', '_2').replace('.R1', '.R2'))
+                    r2_candidates.append(r2_candidate)
+                # Also add legacy candidates for compatibility
+                r2_candidates += [
                     r1_file.replace("_R1_", "_R2_"),
                     r1_file.replace("_R1.", "_R2."),
                     r1_file.replace("_1.", "_2."),
-                    r1_file.replace(".R1.", ".R2.")
+                    r1_file.replace(".R1.", ".R2."),
+                    r1_file.replace("_R1_", "_R2_").replace(".fastq.gz", ".fastq"),
+                    r1_file.replace("_R1.", "_R2.").replace(".fastq.gz", ".fastq"),
+                    r1_file.replace("_1.", "_2.").replace(".fastq.gz", ".fastq"),
+                    r1_file.replace(".R1.", ".R2.").replace(".fastq.gz", ".fastq")
                 ]
-                
                 r2_file = None
                 for r2_candidate in r2_candidates:
                     if os.path.exists(r2_candidate):
@@ -115,23 +127,19 @@ def find_fastq_files_fast(search_dirs):
                         break
                 
                 if r2_file:
-                    # Store with full path as key for exact matching
                     full_r1_path = os.path.abspath(r1_file)
                     full_r2_path = os.path.abspath(r2_file)
-                    
-                    # Store multiple keys for flexible matching
                     keys_to_try = [
-                        sample_base,  # Just sample name
-                        os.path.join(os.path.dirname(r1_file), sample_base),  # Relative path
-                        full_r1_path,  # Full R1 path
-                        r1_file  # Original R1 path
+                        sample_base,
+                        os.path.join(os.path.dirname(r1_file), sample_base),
+                        full_r1_path,
+                        r1_file
                     ]
-                    
                     for key in keys_to_try:
                         if key not in file_pairs:
                             file_pairs[key] = {'R1': full_r1_path, 'R2': full_r2_path}
     
-    print(f"  Found {len(set(pair['R1'] for pair in file_pairs.values()))} unique FASTQ pairs")
+    logging.info(f"  Found {len(set(pair['R1'] for pair in file_pairs.values()))} unique FASTQ pairs")
     return file_pairs
 
 def fuzzy_match_sample(sample_name, available_samples):
@@ -177,85 +185,71 @@ def count_reads_fast(fastq_file):
     """
     read_count = 0
     try:
-        with gzip.open(fastq_file, 'rt') as f:
+        # Auto-detect gzip or plain text
+        opener = gzip.open if str(fastq_file).endswith('.gz') else open
+        with opener(fastq_file, 'rt') as f:
             while True:
-                # Read 4 lines at a time (one FASTQ record)
-                lines = []
-                for _ in range(4):
-                    line = f.readline()
-                    if not line:
-                        return read_count
-                    lines.append(line)
-                
-                # Check if it's a valid FASTQ record
-                if lines[0].startswith('@'):
-                    read_count += 1
-                else:
-                    # If we hit invalid format, break
+                header = f.readline()
+                if not header:
                     break
-                    
+                seq = f.readline()
+                plus = f.readline()
+                qual = f.readline()
+                if not (seq and plus and qual):
+                    break
+                if header.startswith('@'):
+                    read_count += 1
     except Exception as e:
-        print(f"    Error counting reads in {os.path.basename(fastq_file)}: {e}")
+        logging.error(f"    Error counting reads in {os.path.basename(fastq_file)}: {e}")
         return 0
-    
     return read_count
 
 def combine_fastq_files_streaming(source_files, output_file, read_type='R1'):
     """
     FAST streaming combination - uses minimal RAM and maximum speed
     """
-    print(f"  Combining {len(source_files)} files into {os.path.basename(output_file)}")
-    
+    logging.info(f"  Combining {len(source_files)} files into {os.path.basename(output_file)}")
     total_reads = 0
     total_bytes = 0
-    
-    # Get total size for progress tracking
     total_size = sum(os.path.getsize(f) for f in source_files)
-    
     try:
-        with gzip.open(output_file, 'wb') as out_f:
+        # Auto-detect output compression
+        out_is_gz = output_file.endswith('.gz')
+        out_opener = gzip.open if out_is_gz else open
+        with out_opener(output_file, 'wb') as out_f:
             for i, source_file in enumerate(source_files, 1):
                 file_size = os.path.getsize(source_file)
                 file_reads = 0
                 bytes_processed = 0
-                
-                print(f"    [{i}/{len(source_files)}] {os.path.basename(source_file)} ({file_size/1024/1024:.1f} MB)")
-                
+                logging.info(f"    [{i}/{len(source_files)}] {os.path.basename(source_file)} ({file_size/1024/1024:.1f} MB)")
                 try:
-                    with gzip.open(source_file, 'rb') as in_f:
+                    # Auto-detect input compression
+                    in_is_gz = source_file.endswith('.gz')
+                    in_opener = gzip.open if in_is_gz else open
+                    with in_opener(source_file, 'rb') as in_f:
                         while True:
-                            # Stream in large chunks for maximum speed
                             chunk = in_f.read(BUFFER_SIZE)
                             if not chunk:
                                 break
-                            
                             if isinstance(chunk, bytes):
                                 out_f.write(chunk)  # type: ignore
                             else:
                                 raise TypeError(f"Expected bytes, got {type(chunk)}")
                             bytes_processed += len(chunk)
                             total_bytes += len(chunk)
-                            
-                            # Progress indicator for large files
-                            if bytes_processed % (50 * 1024 * 1024) == 0:  # Every 50MB
+                            if bytes_processed % (50 * 1024 * 1024) == 0:
                                 progress = (bytes_processed / file_size) * 100
-                                print(f"      Progress: {progress:.1f}% ({bytes_processed/1024/1024:.1f} MB)")
-                
-                    # Quick read count for this file (separate pass, but fast)
+                                logging.info(f"      Progress: {progress:.1f}% ({bytes_processed/1024/1024:.1f} MB)")
                     file_reads = count_reads_fast(source_file)
                     total_reads += file_reads
-                    
-                    print(f"      ✓ {file_reads:,} reads ({file_size/1024/1024:.1f} MB)")
-                    
+                    logging.info(f"      ✓ {file_reads:,} reads ({file_size/1024/1024:.1f} MB)")
                 except Exception as e:
-                    print(f"      ✗ Error processing {os.path.basename(source_file)}: {e}")
+                    logging.error(f"      ✗ Error processing {os.path.basename(source_file)}: {e}")
                     continue
-    
     except Exception as e:
-        print(f"    ✗ Error writing output file: {e}")
+        logging.error(f"    ✗ Error writing output file: {e}")
         return 0
-    
-    print(f"    ✅ Combined: {total_reads:,} reads ({total_bytes/1024/1024:.1f} MB total)")
+    logging.info(f"    ✅ Combined: {total_reads:,} reads ({total_bytes/1024/1024:.1f} MB total)")
     return total_reads
 
 def sanitize_sample_name(sample_name):
@@ -491,118 +485,171 @@ def generate_html_report(output_dir, mapping, file_pairs, combination_stats, mis
     
     return html_path
 
-def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None):
+def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, dry_run=False, force=False, r1_patterns=None, r2_patterns=None):
     """Main function with streaming optimizations"""
     
-    print("⚡ FASTQ File Combiner - STREAMING OPTIMIZED")
-    print("=" * 60)
-    print(f"🚀 High-speed streaming I/O with minimal RAM usage")
-    print(f"Mapping file: {csv_file}")
-    print(f"Output directory: {output_dir}")
+    logging.info("⚡ FASTQ File Combiner - STREAMING OPTIMIZED")
+    logging.info("=" * 60)
+    logging.info(f"🚀 High-speed streaming I/O with minimal RAM usage")
+    logging.info(f"Mapping file: {csv_file}")
+    logging.info(f"Output directory: {output_dir}")
     
     # Read mapping file
     try:
         mapping = read_mapping_file(csv_file)
     except Exception as e:
-        print(f"Error reading mapping file: {e}")
+        logging.error(f"Error reading mapping file: {e}")
         return
     
     if not mapping:
-        print("No valid mappings found in CSV file!")
+        logging.error("No valid mappings found in CSV file!")
         return
     
     # Fast file discovery
-    file_pairs = find_fastq_files_fast(search_dirs)
+    file_pairs = find_fastq_files_fast(search_dirs, r1_patterns=r1_patterns, r2_patterns=r2_patterns)
     
     if not file_pairs:
-        print("❌ No FASTQ files found! Check your search directories.")
+        logging.error("❌ No FASTQ files found! Check your search directories.")
         return
     
     # Match samples with fuzzy matching
-    print(f"\n🎯 Matching samples...")
+    logging.info(f"\n🎯 Matching samples...")
     available_samples = list(file_pairs.keys())
     fuzzy_matches = {}
     final_mapping = {}
     
     for target, source_paths in mapping.items():
-        print(f"\n  Target: {target}")
+        logging.info(f"\n  Target: {target}")
         matched_sources = []
         
         for source_path in source_paths:
             # Try exact match first
             if source_path in file_pairs:
                 matched_sources.append(source_path)
-                print(f"    ✓ {source_path} (exact match)")
+                logging.info(f"    ✓ {source_path} (exact match)")
             else:
                 # Try fuzzy matching
                 fuzzy_match = fuzzy_match_sample(source_path, available_samples)
                 if fuzzy_match:
                     matched_sources.append(fuzzy_match)
                     fuzzy_matches[source_path] = (source_path, fuzzy_match)
-                    print(f"    ~ {source_path} → {fuzzy_match} (fuzzy match)")
+                    logging.info(f"    ~ {source_path} → {fuzzy_match} (fuzzy match)")
                 else:
-                    print(f"    ✗ {source_path} (no match found)")
+                    logging.warning(f"    ✗ {source_path} (no match found)")
         
         if matched_sources:
             final_mapping[target] = matched_sources
         else:
-            print(f"    ❌ No sources found for {target}")
+            logging.error(f"    ❌ No sources found for {target}")
     
     if not final_mapping:
-        print("❌ No samples could be matched!")
+        logging.error("❌ No samples could be matched!")
+        return
+    
+    # Validate all source files exist and are readable
+    missing_files = []
+    for target, matched_sources in final_mapping.items():
+        for s in matched_sources:
+            for read_type in ['R1', 'R2']:
+                fpath = file_pairs[s][read_type]
+                if not os.path.exists(fpath):
+                    missing_files.append(fpath)
+                elif not os.access(fpath, os.R_OK):
+                    missing_files.append(fpath)
+    if missing_files:
+        logging.error(f"Missing or unreadable files detected: {len(missing_files)}")
+        for f in missing_files:
+            logging.error(f"  {f}")
+        if dry_run:
+            logging.info("Dry run: stopping due to missing files.")
+            return
+        else:
+            logging.warning("Continuing, but some samples may fail.")
+    if dry_run:
+        logging.info("Dry run complete. All files checked.")
         return
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    print(f"\nCreated output directory: {os.path.abspath(output_dir)}")
+    logging.info(f"\nCreated output directory: {os.path.abspath(output_dir)}")
     
     # Perform combinations with Cell Ranger naming - STREAMING MODE
     combination_stats = {}
-    
-    for target, matched_sources in final_mapping.items():
-        print(f"\n🔗 Processing target: {target}")
+
+    def process_target(target, matched_sources):
+        logging.info(f"\n🔗 Processing target: {target}")
         clean_target = sanitize_sample_name(target)
-        
-        print(f"  📁 Combining {len(matched_sources)} files")
-        print(f"  📝 Cell Ranger format: {clean_target}_S1_R*_001.fastq.gz")
-        print(f"  ⚡ Using streaming I/O for maximum speed...")
-        
+        logging.info(f"  📁 Combining {len(matched_sources)} files")
+        logging.info(f"  📝 Cell Ranger format: {clean_target}_S1_R*_001.fastq.gz")
+        logging.info(f"  ⚡ Using streaming I/O for maximum speed...")
         start_time = datetime.now()
-        
-        # Combine R1 files using streaming
         r1_sources = [file_pairs[s]['R1'] for s in matched_sources]
         r1_output = os.path.join(output_dir, f"{clean_target}_S1_R1_001.fastq.gz")
-        r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1')
-        
-        # Combine R2 files using streaming
         r2_sources = [file_pairs[s]['R2'] for s in matched_sources]
         r2_output = os.path.join(output_dir, f"{clean_target}_S1_R2_001.fastq.gz")
+        # Overwrite protection
+        if not force:
+            if os.path.exists(r1_output) or os.path.exists(r2_output):
+                logging.warning(f"  Skipping {target}: output files already exist. Use --force to overwrite.")
+                return {
+                    'target': target,
+                    'source_files': matched_sources,
+                    'total_reads': 0,
+                    'r1_output': r1_output,
+                    'r2_output': r2_output,
+                    'clean_name': clean_target,
+                    'processing_time': 0,
+                    'speed_mb_per_sec': 0,
+                    'skipped': True
+                }
+        r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1')
         r2_reads = combine_fastq_files_streaming(r2_sources, r2_output, 'R2')
-        
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-        
-        # Calculate speed
-        total_size = sum(os.path.getsize(file_pairs[s]['R1']) + os.path.getsize(file_pairs[s]['R2']) 
-                        for s in matched_sources)
+        total_size = sum(os.path.getsize(file_pairs[s]['R1']) + os.path.getsize(file_pairs[s]['R2']) for s in matched_sources)
         speed_mb_per_sec = (total_size / 1024 / 1024) / duration if duration > 0 else 0
-        
-        # Verify read counts match
         if r1_reads != r2_reads:
-            print(f"  ⚠️  Warning: R1 ({r1_reads:,}) and R2 ({r2_reads:,}) read counts don't match!")
-        
-        combination_stats[target] = {
+            logging.warning(f"  ⚠️  Warning: R1 ({r1_reads:,}) and R2 ({r2_reads:,}) read counts don't match!")
+        result = {
+            'target': target,
             'source_files': matched_sources,
             'total_reads': r1_reads,
             'r1_output': r1_output,
             'r2_output': r2_output,
             'clean_name': clean_target,
             'processing_time': duration,
-            'speed_mb_per_sec': speed_mb_per_sec
+            'speed_mb_per_sec': speed_mb_per_sec,
+            'skipped': False
         }
-        
-        print(f"  ✅ {clean_target}: {r1_reads:,} read pairs")
-        print(f"  ⚡ Speed: {speed_mb_per_sec:.1f} MB/sec ({duration:.1f} seconds)")
+        logging.info(f"  ✅ {clean_target}: {r1_reads:,} read pairs")
+        logging.info(f"  ⚡ Speed: {speed_mb_per_sec:.1f} MB/sec ({duration:.1f} seconds)")
+        return result
+
+    # Parallel processing with progress bar
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for target, matched_sources in final_mapping.items():
+            futures.append(executor.submit(process_target, target, matched_sources))
+        for f in tqdm(as_completed(futures), total=len(futures), desc="Combining samples"):
+            res = f.result()
+            combination_stats[res['target']] = res
+    
+    # Output summary CSV
+    csv_path = os.path.join(output_dir, "combination_summary.csv")
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Target", "R1 Output", "R2 Output", "Total Reads", "Processing Time (s)", "Speed (MB/s)", "Skipped"])
+        for target, stats in combination_stats.items():
+            writer.writerow([
+                target,
+                stats.get('r1_output', ''),
+                stats.get('r2_output', ''),
+                stats.get('total_reads', 0),
+                f"{stats.get('processing_time', 0):.2f}",
+                f"{stats.get('speed_mb_per_sec', 0):.2f}",
+                stats.get('skipped', False)
+            ])
+    logging.info(f"📄 CSV summary: {csv_path}")
     
     # Generate reports
     missing_files = []
@@ -616,17 +663,17 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None):
     total_processing_time = sum(stats['processing_time'] for stats in combination_stats.values())
     avg_speed = sum(stats['speed_mb_per_sec'] for stats in combination_stats.values()) / len(combination_stats) if combination_stats else 0
     
-    print(f"\n🎉 Combination Complete!")
-    print(f"✅ Successfully combined {len(combination_stats)} samples")
-    print(f"📊 Total reads processed: {sum(stats['total_reads'] for stats in combination_stats.values()):,}")
-    print(f"⚡ Average speed: {avg_speed:.1f} MB/sec")
-    print(f"⏱️  Total processing time: {total_processing_time:.1f} seconds")
-    print(f"🧬 Cell Ranger compatible naming applied")
-    print(f"📁 Output files: {output_dir}/")
-    print(f"📋 HTML report: {html_report}")
+    logging.info(f"\n🎉 Combination Complete!")
+    logging.info(f"✅ Successfully combined {len(combination_stats)} samples")
+    logging.info(f"📊 Total reads processed: {sum(stats['total_reads'] for stats in combination_stats.values()):,}")
+    logging.info(f"⚡ Average speed: {avg_speed:.1f} MB/sec")
+    logging.info(f"⏱️  Total processing time: {total_processing_time:.1f} seconds")
+    logging.info(f"🧬 Cell Ranger compatible naming applied")
+    logging.info(f"📁 Output files: {output_dir}/")
+    logging.info(f"📋 HTML report: {html_report}")
     
     if fuzzy_matches:
-        print(f"🎯 Applied {len(fuzzy_matches)} fuzzy matches for typos/variations")
+        logging.info(f"🎯 Applied {len(fuzzy_matches)} fuzzy matches for typos/variations")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -642,6 +689,12 @@ Examples:
   
   # Custom output directory
   python3 fastq_combiner.py mapping.csv -o cellranger_input
+  
+  # Custom R1/R2 patterns
+  python3 fastq_combiner.py mapping.csv --r1-pattern "*_R1_*.fq.gz" --r2-pattern "*_R2_*.fq.gz"
+  
+  # Dry run (validate only)
+  python3 fastq_combiner.py mapping.csv --dry-run
 
 ⚡ OPTIMIZATIONS:
   • Streaming I/O - processes files without loading into RAM
@@ -657,14 +710,29 @@ Examples:
                        help='Output directory for combined files (default: combined)')
     parser.add_argument('-d', '--search-dirs', nargs='+', 
                        help='Directories to search for source files')
+    parser.add_argument('--buffer-size', type=int, default=8*1024*1024, help='Buffer size in bytes for streaming (default: 8MB)')
+    parser.add_argument('--dry-run', action='store_true', help='Validate mapping and file existence, but do not combine files')
+    parser.add_argument('--force', action='store_true', help='Overwrite output files if they exist')
+    parser.add_argument('--r1-pattern', action='append', help='Custom glob pattern(s) for R1 files (can be used multiple times)')
+    parser.add_argument('--r2-pattern', action='append', help='Custom glob pattern(s) for R2 files (can be used multiple times)')
     
     args = parser.parse_args()
     
     if not os.path.exists(args.csv_file):
-        print(f"Error: CSV file '{args.csv_file}' not found!")
+        logging.error(f"Error: CSV file '{args.csv_file}' not found!")
         return
     
-    combine_fastq_files_main(args.csv_file, args.output_dir, args.search_dirs)
+    global BUFFER_SIZE
+    BUFFER_SIZE = args.buffer_size
+    combine_fastq_files_main(
+        args.csv_file,
+        args.output_dir,
+        args.search_dirs,
+        dry_run=args.dry_run,
+        force=args.force,
+        r1_patterns=args.r1_pattern,
+        r2_patterns=args.r2_pattern
+    )
 
 if __name__ == "__main__":
     main()

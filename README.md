@@ -1,9 +1,7 @@
 # FASTQ Combiner
 <img src="https://github.com/user-attachments/assets/c2ad7861-90f3-4448-b3a1-155245dd449e" alt="fastq_combiner_image" width="200" height="200">
 
-
-
-A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible outputs with fuzzy matching for sample names. Perfect for combining multi-lane sequencing data or merging samples across different sequencing runs.
+A high-speed, memory-efficient tool for combining paired-end FASTQ files (supports both .fastq and .fastq.gz) for Cell Ranger and other NGS pipelines.
 
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -13,13 +11,17 @@ A fast, intelligent FASTQ file combiner that generates Cell Ranger compatible ou
 
 ## Features
 
-- Parallel processing with multi-threading
-- Automatic Illumina-standard naming (`{sample}_S1_R1_001.fastq.gz`)
-- Handles typos and naming variations automatically
-- Recursive file scanning with intelligent pattern matching
--  HTML reports with combination statistics
-- Seamlessly combines files from different lanes
-- Supports various FASTQ naming conventions
+- Streaming I/O for minimal RAM usage
+- Supports both compressed (.fastq.gz) and uncompressed (.fastq) files
+- Fuzzy sample name matching
+- Parallel processing of samples
+- Progress bar for combination process
+- Logging with configurable verbosity
+- Customizable buffer size
+- Overwrite protection for output files (`--force` flag)
+- Dry run mode for validation
+- Outputs both HTML and CSV summary reports
+- Custom R1/R2 file pattern support
 
 ![carbon](https://github.com/user-attachments/assets/115748c7-09b4-4dcc-81a5-64885cf9c9bc)
 
@@ -43,8 +45,6 @@ python3 fastq_combiner.py --help
 
 ### Basic Usage
 
-
-
 1. **Create a mapping CSV file:**
 ```csv
 target_sample,source_file1,source_file2,source_file3
@@ -55,7 +55,7 @@ Control_Group,Control1,Control2,Negative_Control
 
 2. **Run Combiner:**
 ```bash
-python3 fastq_combiner.py mapping.csv -d /path/to/fastq/files
+python3 fastq_combiner.py mapping.csv
 ```
 
 3. **Get Cell Ranger ready files:**
@@ -85,26 +85,34 @@ Options:
   -h, --help             Show help message
 ```
 
----
-
-## Usage Example
-
-#### Combine multi-lane data
+### With Search Directories
 ```bash
-# Combine lanes from a single run
-python3 fastq_combiner.py samples.csv -d /data/NovaSeq_Run_001/
+python3 fastq_combiner.py mapping.csv -d /data/run1 /data/run2
 ```
 
-#### Combine across multiple runs
+### Custom Output Directory
 ```bash
-# Search multiple directories
-python3 fastq_combiner.py samples.csv -d /data/run1/ /data/run2/ /data/run3/
+python3 fastq_combiner.py mapping.csv -o cellranger_input
 ```
 
-#### Custom output directory
+### Custom Buffer Size
 ```bash
-# Output to cellranger_input folder
-python3 fastq_combiner.py samples.csv -o cellranger_input -d /data/
+python3 fastq_combiner.py mapping.csv --buffer-size 16777216  # 16MB
+```
+
+### Dry Run (Validate Only)
+```bash
+python3 fastq_combiner.py mapping.csv --dry-run
+```
+
+### Overwrite Output Files
+```bash
+python3 fastq_combiner.py mapping.csv --force
+```
+
+### Custom R1/R2 Patterns
+```bash
+python3 fastq_combiner.py mapping.csv --r1-pattern "*_R1_*.fq.gz" --r2-pattern "*_R2_*.fq.gz"
 ```
 
 ### CSV Format
