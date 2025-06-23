@@ -109,6 +109,9 @@ create_backups: true
 # Validate FASTQ quality
 --validate
 
+# Paired-end deduplication (removes duplicate read pairs, not just individual reads)
+--deduplicate --paired-end-dedup
+
 # Check sample barcodes
 --check-barcodes
 
@@ -151,6 +154,9 @@ python3 fastq_combiner.py mapping.csv --checkpoint
 - `combination_summary.csv` - Processing summary
 - `combination_report.html` - Interactive HTML report
 
+#### Paired-End Deduplication Output
+- When using `--deduplicate --paired-end-dedup`, only unique (R1, R2) sequence pairs are retained. If all input reads are identical, only one read pair will be present in the output.
+
 ### HTML Report Features
 - **Interactive search/filter** for large datasets
 - **Success/failure charts** with Chart.js
@@ -192,6 +198,9 @@ Output includes:
 ## 🛠️ Troubleshooting
 
 ### Common Issues
+
+**Paired-end deduplication test: only 1 unique pair output**
+- If all input reads are identical, deduplication will keep only one (R1, R2) pair. This is expected behavior for paired-end deduplication.
 
 **"No FASTQ files found"**
 - Check search directories with `--search-dirs`
@@ -240,3 +249,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built for the bioinformatics community
 - Optimized for Cell Ranger compatibility
 - Inspired by the need for efficient large-scale data processing
+
+## 🧪 Test Coverage
+
+- Comprehensive automated tests cover edge cases, paired-end deduplication, quality validation, error handling, and reporting.
+- The test suite ensures robust behavior for all major features and CLI options.
+
+## ℹ️ Notes
+
+- In dry-run mode (`--dry-run`), the tool logs only that a dry run was completed. It does not log all enabled features or options.
