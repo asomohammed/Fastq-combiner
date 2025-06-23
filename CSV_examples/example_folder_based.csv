@@ -1,4 +1,4 @@
 target_sample,source_file1,source_file2,source_file3,source_file4
-Sample_A,run1/Sample_A,run2/Sample_A,run3/Sample_A,run4/Sample_A
+Sample_A,Sample_A,Sample_A,Sample_A,
 Sample_B,batch1/data/Sample_B,batch2/data/Sample_B,batch3/data/Sample_B
 Sample_C,/storage/seq1/Sample_C,/storage/seq2/Sample_C,local/Sample_C

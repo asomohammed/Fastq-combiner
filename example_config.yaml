@@ -1,0 +1,53 @@
+# FASTQ Combiner Configuration File
+# This file demonstrates all available options and features
+
+# Core settings
+output: "combined_output"
+dry_run: false
+force: false
+
+# Performance & optimization
+buffer_size: 16777216  # 16MB buffer
+threads: 8
+auto_optimize: true
+memory_profile: true
+checkpoint: true
+
+# Data quality & validation
+validate: true
+check_barcodes: true
+gc_analysis: true
+adapter_check: true
+
+# Monitoring & safety
+monitor_disk: true
+create_backups: true
+retry_failed: true
+real_time_monitor: true
+
+# File patterns
+r1_patterns:
+  - "*_R1_*.fastq*"
+  - "*_1.fastq*"
+  - "*_forward.fastq*"
+
+r2_patterns:
+  - "*_R2_*.fastq*"
+  - "*_2.fastq*"
+  - "*_reverse.fastq*"
+
+# Search directories
+search_dirs:
+  - "data/run1"
+  - "data/run2"
+  - "data/run3"
+
+# Output options
+no_html: false
+no_csv: false
+verbose: true
+quiet: false
+
+# Advanced features
+profile: false
+diagnostics: false 

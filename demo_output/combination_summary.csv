@@ -1,0 +1,4 @@
+Target,R1 Output,R2 Output,Total Reads,Processing Time (s),Speed (MB/s),Skipped
+Sample_B,demo_output/Sample_B_S1_R1_001.fastq.gz,demo_output/Sample_B_S1_R2_001.fastq.gz,0,0.00,0.06,False
+Sample_C,demo_output/Sample_C_S1_R1_001.fastq.gz,demo_output/Sample_C_S1_R2_001.fastq.gz,0,0.00,0.07,False
+Sample_A,demo_output/Sample_A_S1_R1_001.fastq.gz,demo_output/Sample_A_S1_R2_001.fastq.gz,0,0.01,0.04,False
