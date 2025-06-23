@@ -89,13 +89,16 @@ def read_mapping_file(csv_file):
 
 def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
     """
-    Fast file discovery using glob patterns
+    Fast file discovery using glob patterns with improved logic
     Returns dict: {sample_base: {'R1': path, 'R2': path}}
     """
     logging.info("\n🔍 Scanning for FASTQ files...")
     if not search_dirs:
         search_dirs = ["."]
+    
     file_pairs = {}
+    temp_pairs = {}  # Temporary storage to avoid race conditions
+    
     # Use custom patterns if provided, else default
     default_r1_patterns = [
         "*_R1_*.fastq.gz", "*_R1.fastq.gz", "*_1.fastq.gz", "*.R1.fastq.gz",
@@ -117,9 +120,13 @@ def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
             logging.debug(f"  Looking for pattern: {full_pattern}")
             r1_files = glob.glob(full_pattern, recursive=True)
             logging.debug(f"  Found R1 files: {r1_files}")
+            
             for r1_file in r1_files:
                 basename = os.path.basename(r1_file)
                 logging.debug(f"  Processing R1 file: {basename}")
+                
+                # Extract sample base using consistent strategy
+                sample_base = None
                 
                 # Strategy 1: Standard Illumina pattern (sample_S1_R1_001.fastq.gz)
                 if "_S" in basename and "_R1_" in basename:
@@ -142,14 +149,17 @@ def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
                 
                 logging.debug(f"    Extracted sample base: {sample_base}")
                 
-                # Find corresponding R2 file using custom or default patterns
+                # Find corresponding R2 file
+                r2_file = None
                 r2_candidates = []
+                
+                # Generate R2 candidates based on the same pattern logic
                 for r2_pattern in r2_patterns:
-                    # Try to match R2 in the same directory with the same sample base
                     r2_candidate = os.path.join(os.path.dirname(r1_file), basename.replace('R1', 'R2').replace('_1', '_2').replace('.R1', '.R2'))
                     r2_candidates.append(r2_candidate)
-                # Also add legacy candidates for compatibility
-                r2_candidates += [
+                
+                # Also try legacy patterns
+                r2_candidates.extend([
                     r1_file.replace("_R1_", "_R2_"),
                     r1_file.replace("_R1.", "_R2."),
                     r1_file.replace("_1.", "_2."),
@@ -158,9 +168,11 @@ def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
                     r1_file.replace("_R1.", "_R2.").replace(".fastq.gz", ".fastq"),
                     r1_file.replace("_1.", "_2.").replace(".fastq.gz", ".fastq"),
                     r1_file.replace(".R1.", ".R2.").replace(".fastq.gz", ".fastq")
-                ]
+                ])
+                
                 logging.debug(f"    R2 candidates: {r2_candidates}")
-                r2_file = None
+                
+                # Find existing R2 file
                 for r2_candidate in r2_candidates:
                     if os.path.exists(r2_candidate):
                         r2_file = r2_candidate
@@ -170,20 +182,28 @@ def find_fastq_files_fast(search_dirs, r1_patterns=None, r2_patterns=None):
                 if r2_file:
                     full_r1_path = os.path.abspath(r1_file)
                     full_r2_path = os.path.abspath(r2_file)
-                    keys_to_try = [
-                        sample_base,
-                        os.path.join(os.path.dirname(r1_file), sample_base),
-                        full_r1_path,
-                        r1_file
-                    ]
-                    logging.debug(f"    Keys to try: {keys_to_try}")
-                    for key in keys_to_try:
-                        if key not in file_pairs:
-                            file_pairs[key] = {'R1': full_r1_path, 'R2': full_r2_path}
-                            logging.debug(f"    Added pair with key: {key}")
-                            break
+                    
+                    # Use consistent key strategy: prefer sample_base, fallback to full path
+                    key = sample_base
+                    if key in temp_pairs:
+                        # If sample_base already exists, use full path to avoid conflicts
+                        key = full_r1_path
+                        logging.debug(f"    Using full path as key due to conflict: {key}")
+                    
+                    temp_pairs[key] = {'R1': full_r1_path, 'R2': full_r2_path}
+                    logging.debug(f"    Added pair with key: {key}")
                 else:
                     logging.debug(f"    No R2 file found for: {r1_file}")
+    
+    # Convert temp_pairs to final file_pairs, resolving any remaining conflicts
+    for key, pair in temp_pairs.items():
+        if key not in file_pairs:
+            file_pairs[key] = pair
+        else:
+            # If still conflicting, use full path as key
+            full_key = pair['R1']
+            file_pairs[full_key] = pair
+            logging.debug(f"Resolved conflict using full path: {full_key}")
     
     logging.info(f"  Found {len(set(pair['R1'] for pair in file_pairs.values()))} unique FASTQ pairs")
     logging.debug(f"  File pairs: {file_pairs}")
@@ -251,6 +271,39 @@ def count_reads_fast(fastq_file):
         return 0
     return read_count
 
+def validate_paired_end_integrity(r1_files, r2_files):
+    """Validate that R1 and R2 files have matching read counts"""
+    r1_counts = {}
+    r2_counts = {}
+    
+    for f in r1_files:
+        r1_counts[f] = count_reads_fast(f)
+    
+    for f in r2_files:
+        r2_counts[f] = count_reads_fast(f)
+    
+    mismatches = []
+    for f in r1_files:
+        r2_file = f.replace('_R1', '_R2').replace('_1', '_2')
+        if r2_file in r2_counts:
+            if r1_counts[f] != r2_counts[r2_file]:
+                mismatches.append((f, r1_counts[f], r2_file, r2_counts[r2_file]))
+    
+    return mismatches
+
+def calculate_file_checksum(file_path):
+    """Calculate MD5 checksum of a file"""
+    import hashlib
+    hash_md5 = hashlib.md5()
+    try:
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+    except Exception as e:
+        logging.warning(f"Could not calculate checksum for {file_path}: {e}")
+        return None
+
 def combine_fastq_files_streaming(source_files, output_file, read_type='R1', buffer_size=BUFFER_SIZE, 
                                 validate=False, check_barcodes=False, gc_analysis=False, adapter_check=False,
                                 create_backups=False, deduplicate=False):
@@ -261,7 +314,14 @@ def combine_fastq_files_streaming(source_files, output_file, read_type='R1', buf
     barcodes_found = set()
     gc_contents = []
     adapters_found = set()
-    seen_sequences = set() if deduplicate else None
+    
+    # Memory-efficient deduplication with size limit
+    if deduplicate:
+        max_sequences = 10_000_000  # 10M sequences max in memory
+        seen_sequences = set()
+        logging.info(f"Using in-memory deduplication (max {max_sequences:,} sequences)")
+    else:
+        seen_sequences = None
     
     # Create backup if requested
     if create_backups:
@@ -290,32 +350,50 @@ def combine_fastq_files_streaming(source_files, output_file, read_type='R1', buf
                     quality = infile.readline()
                     if not all([header, sequence, plus, quality]):
                         break
+                    
                     seq_str = sequence.strip()
-                    if deduplicate:
-                        if seen_sequences is not None:
+                    
+                    # Memory-bounded deduplication
+                    if deduplicate and seen_sequences is not None:
+                        if len(seen_sequences) >= max_sequences:
+                            logging.warning(f"Memory limit reached for deduplication ({max_sequences:,} sequences). Stopping deduplication.")
+                            seen_sequences = None  # Disable further deduplication
+                        else:
                             if seq_str in seen_sequences:
                                 continue
                             seen_sequences.add(seq_str)
+                    
                     total_reads += 1
+                    
+                    # Analysis features
                     if check_barcodes:
                         barcode = extract_sample_barcode(header.strip())
                         if barcode:
                             barcodes_found.add(barcode)
+                    
                     if gc_analysis:
                         gc_content = calculate_gc_content(seq_str)
                         gc_contents.append(gc_content)
+                    
                     if adapter_check:
                         adapters = detect_adapters(seq_str)
                         adapters_found.update(adapters)
+                    
+                    # Write to output
                     outfile.write(header)
                     outfile.write(sequence)
                     outfile.write(plus)
                     outfile.write(quality)
     
-    # Log validation results
+    # Calculate checksum for integrity verification
+    checksum = calculate_file_checksum(output_file)
+    if checksum:
+        logging.info(f"Output file checksum ({read_type}): {checksum}")
+    
+    # Log results
     if validation_warnings:
         logging.warning(f"Validation warnings for {read_type}: {len(validation_warnings)} issues found")
-        for warning in validation_warnings[:5]:  # Show first 5 warnings
+        for warning in validation_warnings[:5]:
             logging.warning(f"  {warning}")
     
     if check_barcodes and barcodes_found:
@@ -413,15 +491,40 @@ def clear_checkpoint(output_dir):
     if os.path.exists(checkpoint_path):
         os.remove(checkpoint_path)
 
+def detect_quality_format(quality_line):
+    """Detect FASTQ quality score format from quality line"""
+    if not quality_line:
+        return 'unknown'
+    
+    # Get ASCII values
+    ascii_values = [ord(c) for c in quality_line]
+    min_val = min(ascii_values)
+    max_val = max(ascii_values)
+    
+    # Sanger/Illumina 1.8+ (ASCII 33-126, Phred+33)
+    if min_val >= 33 and max_val <= 126:
+        return 'sanger'
+    # Illumina 1.3+ (ASCII 64-126, Phred+64)
+    elif min_val >= 64 and max_val <= 126:
+        return 'illumina_1.3'
+    # Old Illumina (ASCII 64-126, Phred+64)
+    elif min_val >= 64:
+        return 'illumina_old'
+    else:
+        return 'unknown'
+
 def validate_fastq_quality(fastq_file):
-    """Validate FASTQ file quality and detect corruption"""
+    """Validate FASTQ file quality and detect corruption with format detection"""
     warnings = []
+    quality_formats = set()
+    
     try:
         opener = gzip.open if fastq_file.endswith('.gz') else open
         with opener(fastq_file, 'rt') as f:
             line_count = 0
             read_count = 0
             lengths = []
+            quality_lines = []
             
             for line in f:
                 line_count += 1
@@ -441,11 +544,31 @@ def validate_fastq_quality(fastq_file):
                 elif line_count % 4 == 0:  # Quality line
                     if len(line) != lengths[-1]:
                         warnings.append(f"Quality length mismatch at read {read_count}")
-                    if not all(33 <= ord(c) <= 126 for c in line):
-                        warnings.append(f"Invalid quality scores at read {read_count}")
+                    
+                    # Detect quality format
+                    quality_format = detect_quality_format(line)
+                    quality_formats.add(quality_format)
+                    
+                    # Validate quality scores based on format
+                    if quality_format == 'sanger':
+                        if not all(33 <= ord(c) <= 126 for c in line):
+                            warnings.append(f"Invalid Sanger quality scores at read {read_count}")
+                    elif quality_format == 'illumina_1.3':
+                        if not all(64 <= ord(c) <= 126 for c in line):
+                            warnings.append(f"Invalid Illumina 1.3+ quality scores at read {read_count}")
+                    elif quality_format == 'unknown':
+                        warnings.append(f"Unknown quality score format at read {read_count}")
+                    
+                    quality_lines.append(line)
             
             if line_count % 4 != 0:
                 warnings.append("Incomplete FASTQ file")
+            
+            # Report quality format consistency
+            if len(quality_formats) > 1:
+                warnings.append(f"Mixed quality formats detected: {quality_formats}")
+            elif quality_formats:
+                logging.info(f"Detected quality format: {list(quality_formats)[0]}")
                 
     except Exception as e:
         warnings.append(f"File read error: {e}")
@@ -1044,11 +1167,35 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
         logging.info(f"  📁 Combining {len(matched_sources)} files")
         logging.info(f"  📝 Cell Ranger format: {clean_target}_S1_R*_001.fastq.gz")
         logging.info(f"  ⚡ Using streaming I/O for maximum speed...")
+        
         start_time = datetime.now()
         r1_sources = [file_pairs[s]['R1'] for s in matched_sources]
         r1_output = os.path.join(output_dir, f"{clean_target}_S1_R1_001.fastq.gz")
         r2_sources = [file_pairs[s]['R2'] for s in matched_sources]
         r2_output = os.path.join(output_dir, f"{clean_target}_S1_R2_001.fastq.gz")
+        
+        # Validate paired-end integrity before processing
+        logging.info(f"  🔍 Validating paired-end integrity...")
+        mismatches = validate_paired_end_integrity(r1_sources, r2_sources)
+        if mismatches:
+            logging.warning(f"  ⚠️  Paired-end mismatches detected:")
+            for r1_file, r1_count, r2_file, r2_count in mismatches:
+                logging.warning(f"    {os.path.basename(r1_file)}: {r1_count:,} vs {os.path.basename(r2_file)}: {r2_count:,}")
+            if not force:
+                logging.error(f"  ❌ Skipping {target} due to paired-end mismatches. Use --force to proceed.")
+                return {
+                    'target': target,
+                    'source_files': matched_sources,
+                    'total_reads': 0,
+                    'r1_output': r1_output,
+                    'r2_output': r2_output,
+                    'clean_name': clean_target,
+                    'processing_time': 0,
+                    'speed_mb_per_sec': 0,
+                    'skipped': True,
+                    'error': 'paired_end_mismatch'
+                }
+        
         # Overwrite protection
         if not force:
             if os.path.exists(r1_output) or os.path.exists(r2_output):
@@ -1062,29 +1209,58 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
                     'clean_name': clean_target,
                     'processing_time': 0,
                     'speed_mb_per_sec': 0,
-                    'skipped': True
+                    'skipped': True,
+                    'error': 'files_exist'
                 }
-        r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
-        r2_reads = combine_fastq_files_streaming(r2_sources, r2_output, 'R2', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
+        
+        # Process with error recovery
+        try:
+            r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
+            r2_reads = combine_fastq_files_streaming(r2_sources, r2_output, 'R2', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
+        except Exception as e:
+            logging.error(f"  ❌ Error processing {target}: {e}")
+            # Clean up partial outputs
+            for output_file in [r1_output, r2_output]:
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+            return {
+                'target': target,
+                'source_files': matched_sources,
+                'total_reads': 0,
+                'r1_output': r1_output,
+                'r2_output': r2_output,
+                'clean_name': clean_target,
+                'processing_time': 0,
+                'speed_mb_per_sec': 0,
+                'skipped': True,
+                'error': str(e)
+            }
+        
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
         total_size = sum(os.path.getsize(file_pairs[s]['R1']) + os.path.getsize(file_pairs[s]['R2']) for s in matched_sources)
         speed_mb_per_sec = (total_size / 1024 / 1024) / duration if duration > 0 else 0
+        
         if r1_reads != r2_reads:
             logging.warning(f"  ⚠️  Warning: R1 ({r1_reads:,}) and R2 ({r2_reads:,}) read counts don't match!")
+        
         result = {
             'target': target,
             'source_files': matched_sources,
             'total_reads': r1_reads,
+            'r2_reads': r2_reads,
             'r1_output': r1_output,
             'r2_output': r2_output,
             'clean_name': clean_target,
             'processing_time': duration,
             'speed_mb_per_sec': speed_mb_per_sec,
-            'skipped': False
+            'skipped': False,
+            'paired_end_mismatches': len(mismatches) if mismatches else 0
         }
+        
         logging.info(f"  ✅ {clean_target}: {r1_reads:,} read pairs")
         logging.info(f"  ⚡ Speed: {speed_mb_per_sec:.1f} MB/sec ({duration:.1f} seconds)")
+        
         return result
 
     # Parallel processing with progress bar
@@ -1100,16 +1276,29 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
     csv_path = os.path.join(output_dir, "combination_summary.csv")
     with open(csv_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["Target", "R1 Output", "R2 Output", "Total Reads", "Processing Time (s)", "Speed (MB/s)", "Skipped"])
+        writer.writerow([
+            "Target", "R1 Output", "R2 Output", "R1 Reads", "R2 Reads", 
+            "Processing Time (s)", "Speed (MB/s)", "Skipped", "Error", 
+            "Paired-End Mismatches", "R1 Checksum", "R2 Checksum"
+        ])
         for target, stats in combination_stats.items():
+            # Calculate checksums for output files
+            r1_checksum = calculate_file_checksum(stats.get('r1_output', '')) if os.path.exists(stats.get('r1_output', '')) else None
+            r2_checksum = calculate_file_checksum(stats.get('r2_output', '')) if os.path.exists(stats.get('r2_output', '')) else None
+            
             writer.writerow([
                 target,
                 stats.get('r1_output', ''),
                 stats.get('r2_output', ''),
                 stats.get('total_reads', 0),
+                stats.get('r2_reads', 0),
                 f"{stats.get('processing_time', 0):.2f}",
                 f"{stats.get('speed_mb_per_sec', 0):.2f}",
-                stats.get('skipped', False)
+                stats.get('skipped', False),
+                stats.get('error', ''),
+                stats.get('paired_end_mismatches', 0),
+                r1_checksum or '',
+                r2_checksum or ''
             ])
     logging.info(f"📄 CSV summary: {csv_path}")
     
@@ -1140,196 +1329,141 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
 def main():
     """Main CLI entry point with enhanced features"""
     parser = argparse.ArgumentParser(
-        description="⚡ FASTQ File Combiner - STREAMING OPTIMIZED\n"
-                    "High-speed streaming I/O with minimal RAM usage for combining paired-end FASTQ files.\n"
-                    "Optimized for Cell Ranger compatibility and large-scale sequencing data.",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        description="⚡ FASTQ File Combiner - High-speed streaming I/O with minimal RAM usage",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python fastq_combiner.py mapping.csv
+  python fastq_combiner.py mapping.csv --output combined --threads 8 --validate
+  python fastq_combiner.py mapping.csv --dry-run --search-dirs data/ run1/ run2/
+  python fastq_combiner.py mapping.csv --deduplicate --paired-end-dedup --validate
+        """
     )
     
-    # Core arguments
-    parser.add_argument("csv_file", help="CSV file with target_sample,source_file1,source_file2,...")
-    parser.add_argument("-o", "--output", default="combined", help="Output directory (default: combined)")
-    parser.add_argument("-d", "--search-dirs", nargs="+", help="Directories to search for FASTQ files")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without creating files")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
+    parser.add_argument('csv_file', help='CSV mapping file (target,sources)')
+    parser.add_argument('--output', '-o', default='combined', help='Output directory (default: combined)')
+    parser.add_argument('--search-dirs', nargs='+', help='Directories to search for FASTQ files')
+    parser.add_argument('--dry-run', action='store_true', help='Show what would be done without processing')
+    parser.add_argument('--force', '-f', action='store_true', help='Overwrite existing output files')
+    parser.add_argument('--threads', '-t', type=int, default=4, help='Number of threads (default: 4)')
+    parser.add_argument('--buffer-size', type=int, default=BUFFER_SIZE, help=f'Buffer size in bytes (default: {BUFFER_SIZE})')
     
-    # Performance & optimization
-    parser.add_argument("--buffer-size", type=int, default=BUFFER_SIZE, 
-                       help=f"Buffer size in bytes (default: {BUFFER_SIZE})")
-    parser.add_argument("--threads", type=int, default=4, help="Number of threads (default: 4)")
-    parser.add_argument("--auto-optimize", action="store_true", 
-                       help="Auto-optimize batch size based on system resources")
-    parser.add_argument("--memory-profile", action="store_true", 
-                       help="Enable memory usage profiling")
-    parser.add_argument("--checkpoint", action="store_true", 
-                       help="Enable checkpointing for resuming interrupted runs")
+    # Analysis options
+    parser.add_argument('--validate', action='store_true', help='Validate FASTQ quality and format')
+    parser.add_argument('--check-barcodes', action='store_true', help='Extract and analyze sample barcodes')
+    parser.add_argument('--gc-analysis', action='store_true', help='Calculate GC content statistics')
+    parser.add_argument('--adapter-check', action='store_true', help='Detect common adapter sequences')
     
-    # Data quality & validation
-    parser.add_argument("--validate", action="store_true", 
-                       help="Validate FASTQ file quality and detect corruption")
-    parser.add_argument("--check-barcodes", action="store_true", 
-                       help="Extract and validate sample barcodes")
-    parser.add_argument("--gc-analysis", action="store_true", 
-                       help="Calculate and report GC content statistics")
-    parser.add_argument("--adapter-check", action="store_true", 
-                       help="Detect common adapter sequences")
+    # Processing options
+    parser.add_argument('--deduplicate', action='store_true', help='Remove duplicate sequences (memory-bounded)')
+    parser.add_argument('--paired-end-dedup', action='store_true', help='Paired-end aware deduplication (maintains pairing)')
+    parser.add_argument('--create-backups', action='store_true', help='Create backups of source files')
+    parser.add_argument('--retry-failed', action='store_true', help='Retry failed operations')
     
-    # Monitoring & safety
-    parser.add_argument("--monitor-disk", action="store_true", 
-                       help="Monitor disk space and warn if low")
-    parser.add_argument("--create-backups", action="store_true", 
-                       help="Create backups of original files before processing")
-    parser.add_argument("--retry-failed", action="store_true", 
-                       help="Retry failed operations with exponential backoff")
-    parser.add_argument("--real-time-monitor", action="store_true", 
-                       help="Show real-time processing statistics")
-    
-    # Advanced features
-    parser.add_argument("--r1-patterns", nargs="+", 
-                       help="Custom R1 file patterns (default: *_R1_*.fastq*)")
-    parser.add_argument("--r2-patterns", nargs="+", 
-                       help="Custom R2 file patterns (default: *_R2_*.fastq*)")
-    parser.add_argument("--config", help="YAML configuration file")
-    parser.add_argument("--diagnostics", action="store_true", 
-                       help="Print system diagnostics and exit")
-    parser.add_argument("--profile", action="store_true", 
-                       help="Enable performance profiling")
+    # Monitoring options
+    parser.add_argument('--real-time-monitor', action='store_true', help='Enable real-time progress monitoring')
+    parser.add_argument('--checkpoint', action='store_true', help='Enable checkpointing for resuming interrupted runs')
     
     # Output options
-    parser.add_argument("--no-html", action="store_true", 
-                       help="Skip HTML report generation")
-    parser.add_argument("--no-csv", action="store_true", 
-                       help="Skip CSV summary generation")
-    parser.add_argument("--verbose", "-v", action="store_true", 
-                       help="Verbose logging")
-    parser.add_argument("--quiet", "-q", action="store_true", 
-                       help="Suppress progress bars and non-essential output")
-    parser.add_argument("--deduplicate", action="store_true", help="Deduplicate reads by sequence (per sample)")
+    parser.add_argument('--no-html', action='store_true', help='Skip HTML report generation')
+    parser.add_argument('--no-csv', action='store_true', help='Skip CSV summary generation')
+    
+    # Advanced options
+    parser.add_argument('--r1-patterns', nargs='+', help='Custom R1 file patterns')
+    parser.add_argument('--r2-patterns', nargs='+', help='Custom R2 file patterns')
+    parser.add_argument('--config', help='YAML configuration file')
+    parser.add_argument('--diagnostics', action='store_true', help='Print system diagnostics')
+    parser.add_argument('--profile', action='store_true', help='Enable performance profiling')
     
     args = parser.parse_args()
     
-    # Setup logging
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    if args.quiet:
-        log_level = logging.WARNING
-    logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
-    
-    # Diagnostics mode
+    # Print diagnostics if requested
     if args.diagnostics:
         print_diagnostics()
         return
     
-    # Load configuration
-    config = {}
+    # Load config file if provided
     if args.config:
         try:
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
+            
+            # Override defaults with config values
+            def get_opt(opt, default=None):
+                return getattr(args, opt) if getattr(args, opt) is not None else config.get(opt, default)
+            
+            # Apply config overrides
+            args.output = get_opt('output', 'combined')
+            args.search_dirs = get_opt('search_dirs', None)
+            args.threads = get_opt('threads', 4)
+            args.buffer_size = get_opt('buffer_size', BUFFER_SIZE)
+            args.validate = get_opt('validate', False)
+            args.check_barcodes = get_opt('check_barcodes', False)
+            args.gc_analysis = get_opt('gc_analysis', False)
+            args.adapter_check = get_opt('adapter_check', False)
+            args.deduplicate = get_opt('deduplicate', False)
+            args.paired_end_dedup = get_opt('paired_end_dedup', False)
+            args.create_backups = get_opt('create_backups', False)
+            args.retry_failed = get_opt('retry_failed', False)
+            args.real_time_monitor = get_opt('real_time_monitor', False)
+            args.checkpoint = get_opt('checkpoint', False)
+            args.no_html = get_opt('no_html', False)
+            args.no_csv = get_opt('no_csv', False)
+            args.r1_patterns = get_opt('r1_patterns', None)
+            args.r2_patterns = get_opt('r2_patterns', None)
+            
         except Exception as e:
-            logging.error(f"Failed to load config file: {e}")
+            logging.error(f"Error loading config file: {e}")
             return
     
-    # Merge config with CLI args
-    def get_opt(opt, default=None):
-        value = getattr(args, opt) if hasattr(args, opt) and getattr(args, opt) is not None else config.get(opt, default)
-        # Ensure proper type conversion
-        if value is None:
-            return default
-        return value
+    # Validate paired-end deduplication
+    if args.paired_end_dedup and not args.deduplicate:
+        logging.warning("--paired-end-dedup requires --deduplicate. Enabling deduplication.")
+        args.deduplicate = True
     
-    # Enhanced system detection and optimization
-    if get_opt('auto_optimize'):
-        available_ram = psutil.virtual_memory().available / 1024 / 1024  # MB
-        storage_type = detect_storage_type(args.output)
-        logging.info(f"System: {available_ram:.0f}MB RAM available, {storage_type} storage")
-        
-        # Auto-optimize buffer size
-        if args.search_dirs:
-            file_count = sum(len(glob.glob(os.path.join(d, "*.fastq*"))) for d in args.search_dirs)
-        else:
-            file_count = 10  # Default estimate
-        optimized_buffer = optimize_batch_size(available_ram, storage_type, file_count)
-        args.buffer_size = optimized_buffer
-        logging.info(f"Auto-optimized buffer size: {optimized_buffer / 1024 / 1024:.1f}MB")
-    
-    # Memory profiling
-    memory_monitor = None
-    if get_opt('memory_profile'):
-        memory_monitor = MemoryMonitor()
-        memory_monitor.start()
-    
-    # Performance profiling
-    profiler = None
-    if get_opt('profile'):
+    # Start profiling if requested
+    if args.profile:
         profiler = cProfile.Profile()
         profiler.enable()
     
     try:
-        # Check for checkpoint
-        if get_opt('checkpoint'):
-            checkpoint_data = load_checkpoint(args.output)
-            if checkpoint_data:
-                logging.info(f"Found checkpoint from {checkpoint_data['timestamp']}")
-                logging.info(f"Resuming from {len(checkpoint_data['completed_targets'])} completed targets")
-        
-        # Monitor disk space
-        if get_opt('monitor_disk'):
-            if not monitor_disk_space(args.output, required_gb=1):
-                logging.error("Insufficient disk space. Aborting.")
-                return 1
-        
-        # Run the main combination
-        start_time = time.time()
+        # Run the main function
         combine_fastq_files_main(
             csv_file=args.csv_file,
-            output_dir=get_opt('output', 'combined'),
-            search_dirs=get_opt('search_dirs'),
-            dry_run=get_opt('dry_run', False),
-            force=get_opt('force', False),
-            r1_patterns=get_opt('r1_patterns'),
-            r2_patterns=get_opt('r2_patterns'),
-            threads=get_opt('threads', 4),
-            buffer_size=get_opt('buffer_size', BUFFER_SIZE),
-            validate=get_opt('validate', False),
-            check_barcodes=get_opt('check_barcodes', False),
-            gc_analysis=get_opt('gc_analysis', False),
-            adapter_check=get_opt('adapter_check', False),
-            create_backups=get_opt('create_backups', False),
-            retry_failed=get_opt('retry_failed', False),
-            real_time_monitor=get_opt('real_time_monitor', False),
-            checkpoint=get_opt('checkpoint', False),
-            no_html=get_opt('no_html', False),
-            no_csv=get_opt('no_csv', False),
-            deduplicate=get_opt('deduplicate', False)
+            output_dir=args.output,
+            search_dirs=args.search_dirs,
+            dry_run=args.dry_run,
+            force=args.force,
+            r1_patterns=args.r1_patterns,
+            r2_patterns=args.r2_patterns,
+            threads=args.threads,
+            buffer_size=args.buffer_size,
+            validate=args.validate,
+            check_barcodes=args.check_barcodes,
+            gc_analysis=args.gc_analysis,
+            adapter_check=args.adapter_check,
+            create_backups=args.create_backups,
+            retry_failed=args.retry_failed,
+            real_time_monitor=args.real_time_monitor,
+            checkpoint=args.checkpoint,
+            no_html=args.no_html,
+            no_csv=args.no_csv,
+            deduplicate=args.deduplicate
         )
         
-        # Performance profiling results
-        if profiler:
-            profiler.disable()
-            s = io.StringIO()
-            ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
-            ps.print_stats(20)
-            logging.info("Performance profile:\n" + s.getvalue())
-        
-        # Memory profiling results
-        if memory_monitor:
-            memory_monitor.stop()
-            peak_memory = memory_monitor.get_peak_memory()
-            logging.info(f"Peak memory usage: {peak_memory:.1f}MB")
-        
-        total_time = time.time() - start_time
-        logging.info(f"Total execution time: {total_time:.2f} seconds")
-        
     except KeyboardInterrupt:
-        logging.info("Interrupted by user")
-        if get_opt('checkpoint'):
-            logging.info("Checkpoint saved. You can resume with --checkpoint flag.")
-        return 1
+        logging.info("\n⚠️  Interrupted by user")
+        sys.exit(1)
     except Exception as e:
-        logging.error(f"Error: {e}")
-        return 1
-    
-    return 0
+        logging.error(f"❌ Fatal error: {e}")
+        sys.exit(1)
+    finally:
+        # Stop profiling and print results
+        if args.profile:
+            profiler.disable()
+            stats = pstats.Stats(profiler)
+            stats.sort_stats('cumulative')
+            stats.print_stats(20)  # Top 20 functions
 
 class MemoryMonitor:
     """Monitor memory usage during processing"""
