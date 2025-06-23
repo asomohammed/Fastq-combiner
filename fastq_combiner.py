@@ -306,107 +306,134 @@ def calculate_file_checksum(file_path):
 
 def combine_fastq_files_streaming(source_files, output_file, read_type='R1', buffer_size=BUFFER_SIZE, 
                                 validate=False, check_barcodes=False, gc_analysis=False, adapter_check=False,
-                                create_backups=False, deduplicate=False):
-    """Combine multiple FASTQ files using streaming I/O with enhanced validation and optional deduplication"""
+                                create_backups=False, deduplicate=False, paired_end_dedup=False, mate_files=None):
+    """
+    Combine multiple FASTQ files using streaming I/O with enhanced validation and optional deduplication.
+    If paired_end_dedup is True, deduplicate based on (R1, R2) sequence pairs.
+    - For single-end: source_files is a list of file paths.
+    - For paired-end: source_files is a list of (R1, R2) tuples, and output_file is (R1_out, R2_out).
+    """
     total_reads = 0
     total_size = 0
     validation_warnings = []
     barcodes_found = set()
     gc_contents = []
     adapters_found = set()
-    
-    # Memory-efficient deduplication with size limit
-    if deduplicate:
-        max_sequences = 10_000_000  # 10M sequences max in memory
-        seen_sequences = set()
-        logging.info(f"Using in-memory deduplication (max {max_sequences:,} sequences)")
-    else:
-        seen_sequences = None
-    
-    # Create backup if requested
-    if create_backups:
-        for source_file in source_files:
-            create_backup(source_file)
-    
-    with gzip.open(output_file, 'wt') as outfile:
-        for i, source_file in enumerate(source_files, 1):
-            file_size = os.path.getsize(source_file)
-            total_size += file_size
-            
-            # Validate file if requested
-            if validate:
-                file_warnings = validate_fastq_quality(source_file)
-                if file_warnings:
-                    validation_warnings.extend([f"{source_file}: {w}" for w in file_warnings])
-            
-            opener = gzip.open if source_file.endswith('.gz') else open
-            with opener(source_file, 'rt') as infile:
-                while True:
-                    header = infile.readline()
-                    if not header:
-                        break
-                    sequence = infile.readline()
-                    plus = infile.readline()
-                    quality = infile.readline()
-                    if not all([header, sequence, plus, quality]):
-                        break
-                    
-                    seq_str = sequence.strip()
-                    
-                    # Memory-bounded deduplication
-                    if deduplicate and seen_sequences is not None:
-                        if len(seen_sequences) >= max_sequences:
-                            logging.warning(f"Memory limit reached for deduplication ({max_sequences:,} sequences). Stopping deduplication.")
-                            seen_sequences = None  # Disable further deduplication
-                        else:
-                            if seq_str in seen_sequences:
+    max_sequences = 10_000_000  # 10M pairs max in memory
+
+    if paired_end_dedup:
+        # Paired-end deduplication: source_files is a list of (R1, R2) tuples, output_file is (R1_out, R2_out)
+        seen_pairs = set()
+        r1_out, r2_out = output_file
+        with gzip.open(r1_out, 'wt') as out1, gzip.open(r2_out, 'wt') as out2:
+            for r1_file, r2_file in source_files:
+                opener1 = gzip.open if r1_file.endswith('.gz') else open
+                opener2 = gzip.open if r2_file.endswith('.gz') else open
+                with opener1(r1_file, 'rt') as in1, opener2(r2_file, 'rt') as in2:
+                    while True:
+                        h1 = in1.readline()
+                        s1 = in1.readline()
+                        p1 = in1.readline()
+                        q1 = in1.readline()
+                        h2 = in2.readline()
+                        s2 = in2.readline()
+                        p2 = in2.readline()
+                        q2 = in2.readline()
+                        if not all([h1, s1, p1, q1, h2, s2, p2, q2]):
+                            break
+                        seq1 = s1.strip()
+                        seq2 = s2.strip()
+                        pair_key = (seq1, seq2)
+                        if deduplicate:
+                            if len(seen_pairs) >= max_sequences:
+                                logging.warning(f"Memory limit reached for paired-end deduplication ({max_sequences:,} pairs). Stopping deduplication.")
+                                deduplicate = False
+                            elif pair_key in seen_pairs:
                                 continue
-                            seen_sequences.add(seq_str)
-                    
-                    total_reads += 1
-                    
-                    # Analysis features
-                    if check_barcodes:
-                        barcode = extract_sample_barcode(header.strip())
-                        if barcode:
-                            barcodes_found.add(barcode)
-                    
-                    if gc_analysis:
-                        gc_content = calculate_gc_content(seq_str)
-                        gc_contents.append(gc_content)
-                    
-                    if adapter_check:
-                        adapters = detect_adapters(seq_str)
-                        adapters_found.update(adapters)
-                    
-                    # Write to output
-                    outfile.write(header)
-                    outfile.write(sequence)
-                    outfile.write(plus)
-                    outfile.write(quality)
-    
-    # Calculate checksum for integrity verification
-    checksum = calculate_file_checksum(output_file)
-    if checksum:
-        logging.info(f"Output file checksum ({read_type}): {checksum}")
-    
-    # Log results
-    if validation_warnings:
-        logging.warning(f"Validation warnings for {read_type}: {len(validation_warnings)} issues found")
-        for warning in validation_warnings[:5]:
-            logging.warning(f"  {warning}")
-    
-    if check_barcodes and barcodes_found:
-        logging.info(f"Found {len(barcodes_found)} unique barcodes in {read_type}")
-    
-    if gc_analysis and gc_contents:
-        avg_gc = sum(gc_contents) / len(gc_contents)
-        logging.info(f"Average GC content for {read_type}: {avg_gc:.1f}%")
-    
-    if adapter_check and adapters_found:
-        logging.warning(f"Detected adapters in {read_type}: {', '.join(adapters_found)}")
-    
-    return total_reads
+                            else:
+                                seen_pairs.add(pair_key)
+                        total_reads += 1
+                        out1.write(h1)
+                        out1.write(s1)
+                        out1.write(p1)
+                        out1.write(q1)
+                        out2.write(h2)
+                        out2.write(s2)
+                        out2.write(p2)
+                        out2.write(q2)
+        # Calculate checksums for both outputs
+        checksum1 = calculate_file_checksum(r1_out)
+        checksum2 = calculate_file_checksum(r2_out)
+        if checksum1:
+            logging.info(f"Output file checksum (R1): {checksum1}")
+        if checksum2:
+            logging.info(f"Output file checksum (R2): {checksum2}")
+        return total_reads
+    else:
+        # Single-end or non-paired deduplication (original logic)
+        if deduplicate:
+            seen_sequences = set()
+            logging.info(f"Using in-memory deduplication (max {max_sequences:,} sequences)")
+        else:
+            seen_sequences = None
+        with gzip.open(output_file, 'wt') as outfile:
+            for i, source_file in enumerate(source_files, 1):
+                file_size = os.path.getsize(source_file)
+                total_size += file_size
+                if validate:
+                    file_warnings = validate_fastq_quality(source_file)
+                    if file_warnings:
+                        validation_warnings.extend([f"{source_file}: {w}" for w in file_warnings])
+                opener = gzip.open if source_file.endswith('.gz') else open
+                with opener(source_file, 'rt') as infile:
+                    while True:
+                        header = infile.readline()
+                        if not header:
+                            break
+                        sequence = infile.readline()
+                        plus = infile.readline()
+                        quality = infile.readline()
+                        if not all([header, sequence, plus, quality]):
+                            break
+                        seq_str = sequence.strip()
+                        if deduplicate and seen_sequences is not None:
+                            if len(seen_sequences) >= max_sequences:
+                                logging.warning(f"Memory limit reached for deduplication ({max_sequences:,} sequences). Stopping deduplication.")
+                                seen_sequences = None
+                            else:
+                                if seq_str in seen_sequences:
+                                    continue
+                                seen_sequences.add(seq_str)
+                        total_reads += 1
+                        if check_barcodes:
+                            barcode = extract_sample_barcode(header.strip())
+                            if barcode:
+                                barcodes_found.add(barcode)
+                        if gc_analysis:
+                            gc_content = calculate_gc_content(seq_str)
+                            gc_contents.append(gc_content)
+                        if adapter_check:
+                            adapters = detect_adapters(seq_str)
+                            adapters_found.update(adapters)
+                        outfile.write(header)
+                        outfile.write(sequence)
+                        outfile.write(plus)
+                        outfile.write(quality)
+        checksum = calculate_file_checksum(output_file)
+        if checksum:
+            logging.info(f"Output file checksum ({read_type}): {checksum}")
+        if validation_warnings:
+            logging.warning(f"Validation warnings for {read_type}: {len(validation_warnings)} issues found")
+            for warning in validation_warnings[:5]:
+                logging.warning(f"  {warning}")
+        if check_barcodes and barcodes_found:
+            logging.info(f"Found {len(barcodes_found)} unique barcodes in {read_type}")
+        if gc_analysis and gc_contents:
+            avg_gc = sum(gc_contents) / len(gc_contents)
+            logging.info(f"Average GC content for {read_type}: {avg_gc:.1f}%")
+        if adapter_check and adapters_found:
+            logging.warning(f"Detected adapters in {read_type}: {', '.join(adapters_found)}")
+        return total_reads
 
 def sanitize_sample_name(sample_name):
     """Sanitize sample name for Cell Ranger compatibility"""
@@ -1161,7 +1188,7 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
     # Perform combinations with Cell Ranger naming - STREAMING MODE
     combination_stats = {}
 
-    def process_target(target, matched_sources):
+    def process_target(target, matched_sources, paired_end_dedup):
         logging.info(f"\n🔗 Processing target: {target}")
         clean_target = sanitize_sample_name(target)
         logging.info(f"  📁 Combining {len(matched_sources)} files")
@@ -1215,8 +1242,14 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
         
         # Process with error recovery
         try:
-            r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
-            r2_reads = combine_fastq_files_streaming(r2_sources, r2_output, 'R2', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate)
+            if paired_end_dedup:
+                # Pass zipped tuples for paired-end deduplication
+                paired_sources = list(zip(r1_sources, r2_sources))
+                r1_reads = combine_fastq_files_streaming(paired_sources, (r1_output, r2_output), 'R1', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate, paired_end_dedup)
+                r2_reads = r1_reads  # Both outputs should have the same number of reads
+            else:
+                r1_reads = combine_fastq_files_streaming(r1_sources, r1_output, 'R1', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate, paired_end_dedup)
+                r2_reads = combine_fastq_files_streaming(r2_sources, r2_output, 'R2', buffer_size, validate, check_barcodes, gc_analysis, adapter_check, create_backups, deduplicate, paired_end_dedup)
         except Exception as e:
             logging.error(f"  ❌ Error processing {target}: {e}")
             # Clean up partial outputs
@@ -1267,7 +1300,7 @@ def combine_fastq_files_main(csv_file, output_dir="combined", search_dirs=None, 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = []
         for target, matched_sources in final_mapping.items():
-            futures.append(executor.submit(process_target, target, matched_sources))
+            futures.append(executor.submit(process_target, target, matched_sources, deduplicate))
         for f in tqdm(as_completed(futures), total=len(futures), desc="Combining samples"):
             res = f.result()
             combination_stats[res['target']] = res
